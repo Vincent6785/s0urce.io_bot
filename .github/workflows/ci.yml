@@ -1,0 +1,23 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['18', '20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # Nothing to install: the suites run on plain node, against a fake
+      # tesseract and a dead Ollama port, so no engine has to be present.
+      # This also proves the "fresh clone" promise on every push.
+      - run: ./test/run.sh
