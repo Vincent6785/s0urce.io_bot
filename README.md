@@ -328,7 +328,7 @@ Keep WPM plausible — the server records it and shows it to your victims.
 
     ./test/run.sh
 
-**215 assertions over nine suites** on a fresh clone, **223** when the optional
+**216 assertions over nine suites** on a fresh clone, **224** when the optional
 `bck` dictionary fixture is present — the eight extra ones live in
 `ocr_perf_test.js` and are skipped without it. Exit code 0 either way, with no
 browser, no tesseract, no ollama and no network:

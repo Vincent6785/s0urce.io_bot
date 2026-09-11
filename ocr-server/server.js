@@ -394,10 +394,14 @@ const server = http.createServer(async (req, res) => {
       // counter was still zero, because no body had finished arriving yet.
       inFlight++;
       try {
-        const body = await readBody(req, MAX_OCR_BODY);
         const ctl = new AbortController();
         // Nothing useful survives a client that hung up: stop the engines.
-        req.on('close', () => { if (!res.writableEnded) ctl.abort(); });
+        // This listens on the response, not the request: a fully received
+        // request has already emitted 'close' by the time readBody resolves,
+        // so a listener attached there fires never. The response stays open
+        // until we answer, which is exactly the window we care about.
+        res.on('close', () => { if (!res.writableEnded) ctl.abort(); });
+        const body = await readBody(req, MAX_OCR_BODY);
         const out = await handleOcr(body, ctl.signal);
         res.ocrResult = out;
         return send(res, 200, out);

@@ -7,8 +7,11 @@
 if [ -n "$FAKE_TESS_COUNT" ]; then echo x >> "$FAKE_TESS_COUNT"; fi
 if [ "$1" = "--version" ]; then echo "tesseract 0.0-fake"; exit 0; fi
 cat > /dev/null
-# FAKE_TESS_SLEEP holds a request in flight long enough to test the semaphore.
-if [ -n "$FAKE_TESS_SLEEP" ]; then sleep "$FAKE_TESS_SLEEP"; fi
+# FAKE_TESS_SLEEP holds a request in flight long enough to test the semaphore
+# and the kill-on-hangup path. exec replaces this shell, so the pid the server
+# holds is the process that must die -- a wrapper shell defers SIGTERM until
+# its foreground child exits, which would hide a failure to kill anything.
+if [ -n "$FAKE_TESS_SLEEP" ]; then exec sleep "$FAKE_TESS_SLEEP"; fi
 psm=""
 while [ $# -gt 0 ]; do
   if [ "$1" = "--psm" ]; then psm="$2"; fi

@@ -358,6 +358,32 @@ const realFetch = global.fetch;
         burst.filter(s => s === 503).length === 2 &&
         burst.filter(s => s === 200).length === 4, JSON.stringify(burst));
 
+  // A caller that hangs up must not leave engines running. Regression: the
+  // listener used to sit on the request, which has already emitted 'close' by
+  // the time its body is read, so nothing was ever aborted.
+  const DUR = '7.77';                 // distinctive: nothing else sleeps this long
+  const engines = () => {
+    try {
+      return +require('child_process')
+        .execSync("pgrep -fc 'slee[p] " + DUR + "'").toString().trim();
+    } catch (e) { return 0; }
+  };
+  process.env.FAKE_TESS_SLEEP = DUR;
+  const hangup = new AbortController();
+  realFetch(base + '/ocr', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ image: png }), signal: hangup.signal
+  }).catch(() => {});
+  await sleep(700);
+  const running = engines();          // proves the measurement works at all
+  hangup.abort();
+  await sleep(1300);
+  const survivors = engines();
+  delete process.env.FAKE_TESS_SLEEP;
+  check('a caller that hangs up leaves no engine running',
+        running >= 1 && survivors === 0,
+        `in flight ${running}, still alive ${survivors}`);
+
   // start() is the only entry point that binds a port, so the wildcard guard
   // has to be checked where it lives; it exits, hence a child process.
   const startsWith = origin => {
