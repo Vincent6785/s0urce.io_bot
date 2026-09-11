@@ -1,0 +1,20 @@
+#!/bin/sh
+# Deterministic stand-in for tesseract: the answer for each page-segmentation
+# mode comes from FAKE_TESS_<psm>, so the agreement logic can be tested without
+# depending on the real binary or its accuracy.
+# FAKE_TESS_COUNT records every invocation, including --version, so a test can
+# prove /health caches engine detection instead of spawning on each call.
+if [ -n "$FAKE_TESS_COUNT" ]; then echo x >> "$FAKE_TESS_COUNT"; fi
+if [ "$1" = "--version" ]; then echo "tesseract 0.0-fake"; exit 0; fi
+cat > /dev/null
+# FAKE_TESS_SLEEP holds a request in flight long enough to test the semaphore.
+if [ -n "$FAKE_TESS_SLEEP" ]; then sleep "$FAKE_TESS_SLEEP"; fi
+psm=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--psm" ]; then psm="$2"; fi
+  shift
+done
+case "$psm" in
+  7) printf '%s\n' "$FAKE_TESS_7" ;;
+  8) printf '%s\n' "$FAKE_TESS_8" ;;
+esac
