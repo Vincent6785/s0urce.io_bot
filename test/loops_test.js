@@ -128,8 +128,7 @@ const gear = (id, type, rarity, extra) =>
   const four = [gear('a', 'gpu', 'rare'), gear('b', 'gpu', 'rare'),
                 gear('c', 'gpu', 'rare'), gear('d', 'gpu', 'rare')];
   s = server();
-  let snapCall = 0;
-  s.routes.getInventory = () => { snapCall++; return inventory(four, 2); };
+  s.routes.getInventory = () => inventory(four, 2);
   s.routes.upgradeItem = () => ({ status: 'success', upgrader_0: gear('merged', 'gpu', 'epic'),
                                   btcUpdate: { btc: 99, btcPerSecond: 0 } });
   wallet.absorb({ btc: 100, btcPerSecond: 0 });
@@ -297,14 +296,17 @@ const gear = (id, type, rarity, extra) =>
   check('AI market: an item in the slot is sold', only(s, 'sellToAiMarket').length === 1);
   s.stop();
 
-  // Stuck recovery reads the inventory payload, not player_profile.
+  // Stuck recovery reads the inventory payload, not player_profile. The bait
+  // has to sit where the bot actually looks: freeStuckItems only ever calls
+  // getInventory, so a getComputerInfo route is never served and the check
+  // would pass without anything having been offered to ignore.
   s = server();
-  s.routes.getComputerInfo = () => ({ status: 'success', player_stats: {},
-                                      player_profile: { upgrader_1: gear('ghost', 'gpu', 'rare') } });
-  s.routes.getInventory = () => inventory([], 3);
+  s.routes.getInventory = () => inventory([], 3, {
+    player_profile: { upgrader_1: gear('ghost', 'gpu', 'rare') }
+  });
   await bot.freeStuckItems(); await sleep(20);
   check('a slot present only in player_profile is ignored',
-        only(s, 'moveItem').length === 0);
+        only(s, 'moveItem').length === 0, JSON.stringify(sentEvents(s)));
   s.stop();
 
   // An unanswered chore is paused, doubled, and cleared by a later success.

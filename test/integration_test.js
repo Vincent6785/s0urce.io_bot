@@ -38,8 +38,6 @@ const framesOf = ws => ws.sent.map(f => {
   const d = A.decodeFrame(f);
   return d && Array.isArray(d.payload) ? { id: d.id, ...d.payload[1] } : null;
 }).filter(Boolean);
-const lastFrame = ws => framesOf(ws).slice(-1)[0];
-const ackFor = (ws, matcher) => framesOf(ws).find(matcher);
 const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
 
 (async () => {
@@ -139,7 +137,7 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
 
   // --- 6. a rejected word is re-asked, and each word logs exactly one line --
   words.length = 0;
-  let asked = 0, misses = 0;
+  let asked = 0;
   A.ui.askWord = async () => { asked++; return 'correct'; };
   // The oracle reads before the prompt is ever shown, so failing the dictionary
   // and letting the oracle answer once stages both sources inside one hack:
@@ -181,7 +179,7 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
         reply({ status: 'success', profile: {}, tries_left: 5, image: 'IMG' });
       else if (req.event === 'sendWord') {
         words.push(req.word);
-        if (req.word === 'wrong') { misses++; reply({ effect: 'failed', tries_left: 4 }); }   // NO new image
+        if (req.word === 'wrong') reply({ effect: 'failed', tries_left: 4 });   // NO new image
         else reply({ status: 'victory', effect: 'success', btcReward: 0, showLoot: false });
       } else reply({ status: 'success' });
     }

@@ -9,7 +9,7 @@ const FONT = {
   i: ["00000","00000","00100","00100","00100","00100","00100"],  // vertically offset
 };
 
-function render(word, noise=0) {
+function render(word) {
   const h = 7;
   const glyphs = [...word].map(ch => FONT[ch]);
   const w = glyphs.length * 5 + (glyphs.length - 1); // 1px gap
@@ -19,12 +19,6 @@ function render(word, noise=0) {
     for (let y=0;y<h;y++) for (let dx=0;dx<5;dx++)
       if (g[y][dx]==='1') mask[y*w + x + dx] = 1;
     x += 6;
-  }
-  if (noise) {
-    for (let k=0;k<noise;k++) {
-      const p = Math.floor(Math.random()*w*h);
-      mask[p] ^= 1;
-    }
   }
   return {w,h,mask};
 }

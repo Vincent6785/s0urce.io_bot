@@ -1127,6 +1127,7 @@
 
     const oracle = {
         offline: false,                 // set after a connection failure
+        diagnosed: false,               // /health probed once, after the first timeout
         stats: { asked: 0, accepted: 0, rejected: 0, engines: {} },
 
         reset() { this.offline = false; this.diagnosed = false; },
@@ -1167,19 +1168,16 @@
             } finally { clearTimeout(timer); }
         },
 
+        // `ask` is the only caller and always sends `holeWidth`, so a hole may
+        // hide several touching letters and the length is only bounded, never
+        // exact. The server keeps an exact-length branch as well — it has to
+        // answer whatever a caller sends it; this one does not.
         fits(text, hint) {
             if (!text) return false;
-            if (hint.holeWidth) {
-                if (hint.minLength && text.length < hint.minLength) return false;
-                if (hint.maxLength && text.length > hint.maxLength) return false;
-                return !hint.pattern || patternRegex(hint.pattern, '?', hint.holeWidth).test(text);
-            }
-            if (hint.length && text.length !== hint.length) return false;
-            const p = hint.pattern || '';
-            for (let i = 0; i < p.length && i < text.length; i++) {
-                if (p[i] !== '?' && p[i] !== text[i]) return false;
-            }
-            return true;
+            if (hint.minLength && text.length < hint.minLength) return false;
+            if (hint.maxLength && text.length > hint.maxLength) return false;
+            return !hint.pattern ||
+                   patternRegex(hint.pattern, '?', hint.holeWidth || 1).test(text);
         },
 
         // Prefer a reading that is a word we have already seen.
@@ -1588,7 +1586,7 @@
             let forceAsk = false;
             this.current = {
                 name: target.username || target.id, port, tries,
-                progress: 0, image, word: null, btc: 0, startedAt: now()
+                progress: 0, image, word: null, btc: 0
             };
             ui.log(`hacking ${target.username || target.id} on port ${port} (${tries} tries)`);
             ui.status();

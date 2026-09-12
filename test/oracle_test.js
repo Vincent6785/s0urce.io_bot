@@ -273,7 +273,6 @@ const realFetch = global.fetch;
   // A real session timed out for 40 s against a port with nothing listening:
   // a refused connection is instant, so a hang means the browser held it.
   const lastLines = () => A.ui.lines.slice(-4).join(' | ');
-  cfg.oracleUrl = 'http://127.0.0.1:8787/ocr';
 
   oracle.reset();
   global.fetch = async () => ({ ok: true, json: async () => ({}) });

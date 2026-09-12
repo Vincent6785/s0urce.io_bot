@@ -68,7 +68,7 @@ win.document = new Proxy({
   body: anyProxy(),
   querySelector: () => anyProxy()
 }, { get(o, k) { if (!(k in o)) o[k] = anyProxy(); return o[k]; } });
-win.location = { reload() { win.location.reloaded = true; } };
+win.location = { reload() {} };
 win.addEventListener = () => {};
 win.navigator = { userAgent: 'node' };
 
