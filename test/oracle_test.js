@@ -180,8 +180,12 @@ const realFetch = global.fetch;
         oracle.stats.rejected === before2 + 1 && oracle.offline === false);
 
   // --- 11. the feedback endpoint is derived, not assumed -------------------
-  const seen = [];
-  global.fetch = async (url) => { seen.push(String(url)); return { ok: true, json: async () => ({}) }; };
+  const seen = [], bodies = [];
+  global.fetch = async (url, init) => {
+    seen.push(String(url));
+    bodies.push(init && init.body ? JSON.parse(init.body) : null);
+    return { ok: true, json: async () => ({}) };
+  };
   oracle.reset();
   cfg.oracleUrl = 'http://127.0.0.1:8787/ocr';
   oracle.report({ engine: 'x', text: 'y' }, true);
@@ -191,6 +195,21 @@ const realFetch = global.fetch;
   check('the feedback endpoint follows the configured path',
         seen[0] === 'http://127.0.0.1:8787/feedback' &&
         seen[1] === 'http://127.0.0.1:9999/api/v2/feedback', JSON.stringify(seen));
+  // No test ever looked inside the payload, which is how `word` spent a whole
+  // release carrying the engine's own reading and calling it confirmed.
+  seen.length = 0; bodies.length = 0;
+  oracle.report({ engine: 'tesseract', text: 'expolit' }, false, null);
+  oracle.report({ engine: 'glm-ocr', text: 'exploit' }, true, 'exploit');
+  await sleep(5);
+  check('a rejection nobody confirmed reports no word at all',
+        !!bodies[0] && bodies[0].reading === 'expolit' &&
+        bodies[0].word === null && bodies[0].accepted === false,
+        JSON.stringify(bodies[0]));
+  check('an accepted reading reports the word the server took',
+        !!bodies[1] && bodies[1].reading === 'exploit' &&
+        bodies[1].word === 'exploit' && bodies[1].accepted === true,
+        JSON.stringify(bodies[1]));
+
   cfg.oracleUrl = 'http://127.0.0.1:8787/ocr';
   global.fetch = realFetch;        // the server section needs the real one
 
@@ -388,9 +407,15 @@ const realFetch = global.fetch;
   await sleep(1300);
   const survivors = engines();
   delete process.env.FAKE_TESS_SLEEP;
-  check('a caller that hangs up leaves no engine running',
-        running >= 1 && survivors === 0,
-        `in flight ${running}, still alive ${survivors}`);
+  if (hasPgrep) {
+    check('a caller that hangs up leaves no engine running',
+          running >= 1 && survivors === 0,
+          `in flight ${running}, still alive ${survivors}`);
+  } else {
+    // Without this the catch in engines() returned 0, the assertion failed, and
+    // the message blamed the server for a missing binary.
+    console.log('skip  a caller that hangs up leaves no engine running (no pgrep)');
+  }
 
   // start() is the only entry point that binds a port, so the wildcard guard
   // has to be checked where it lives; it exits, hence a child process.

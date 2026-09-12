@@ -387,6 +387,8 @@
                 summary: redact(arg)
             });
             if (name === 'event' && arg && arg.event) {
+                // Swallowed on purpose: one bad listener must not stop the
+                // others, nor break frame dispatch for the real client.
                 bus.listeners.forEach(fn => { try { fn(arg.event, arg.arguments || []); } catch (e) { } });
             }
             return;
@@ -468,7 +470,9 @@
                         });
                     }
                 }
-            } catch (e) { }
+            } catch (e) { }   // this runs inside the real client's ws.send:
+                              // an exception here would break the game itself,
+                              // and all we would lose is a trace line.
             return bus.rawSend(data);
         };
 
@@ -946,7 +950,7 @@
             // `v` was written on export and never read back, which made it a
             // decoration rather than a format guard. A newer format would
             // otherwise be half-imported by the shape sniffing below.
-            if (typeof data.v === 'number' && data.v > 1) {
+            if (Number(data.v) > 1) {                 // a string "2" counts too
                 throw new Error('backup from a newer version (v' + data.v + ')');
             }
 
@@ -1255,8 +1259,14 @@
                 // most informative thing in a failed resolution, and until now
                 // nothing ever looked at them.
                 const seen = [].concat((res && res.readings) || [],
-                                       (res && res.discarded) || []);
+                                       (res && res.discarded) || [])
+                    .filter(r => r && typeof r === 'object')
+                    .slice(0, 6);
                 if (seen.length) {
+                    // Filtered and capped because oracleUrl is user-editable:
+                    // a null entry here would throw inside ask() and take the
+                    // whole run down, and an endpoint returning thousands of
+                    // readings would put one enormous line in the log.
                     ui.log('oracle read something that did not fit: ' +
                            seen.map(r => `${r.engine}="${r.text}"`).join(', '));
                 }
@@ -1267,11 +1277,12 @@
             return best;
         },
 
-        // Tell the server whether the game accepted the word, and what the word
-        // turned out to be. `confirmed` is deliberately not the reading: after a
-        // rejection it is the word you typed instead, and that difference is the
-        // entire value of the log. Sending the reading in both fields made every
-        // line -- including the rejected ones -- claim the engine had been right.
+        // Tell the server whether the game accepted the word, and which word it
+        // actually was. `confirmed` stays null until something is genuinely
+        // confirmed -- the retry after a rejection is usually another oracle
+        // reading rather than a human answer, so it proves nothing by itself.
+        // Putting the reading in this field, as this did for one release, makes
+        // every line including the rejections claim the engine had been right.
         report(reading, accepted, confirmed) {
             if (!cfg.oracleEnabled || this.offline || !reading) return;
             fetch(this.endpoint('feedback'), {
@@ -1279,7 +1290,7 @@
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({
                     engine: reading.engine, reading: reading.text,
-                    word: confirmed || reading.text, accepted: !!accepted
+                    word: confirmed || null, accepted: !!accepted
                 })
             }).catch(() => { });
         }
@@ -1305,6 +1316,8 @@
         },
 
         sendWord(word) {
+            // debug_free_premium is the game's own field name and the client
+            // sends it too. It is always false here: nothing is being unlocked.
             return emit({ event: 'sendWord', word, debug_free_premium: false });
         },
 
@@ -1400,7 +1413,6 @@
         counterHacked: false,
         current: null,        // live hack, for the Dashboard tab
         lastOracle: null,     // oracle reading awaiting the server's verdict
-        pendingReport: null,  // rejected reading, waiting to learn the real word
         chore: null,          // housekeeping step in progress
         choreBackoff: {},     // step -> {until, ms} after an unanswered request
         history: [],          // per-word and per-hack samples, for the charts
@@ -1543,6 +1555,12 @@
                               btc: (this.current && this.current.btc) || 0,
                               ms: now() - startedAt });
             } finally {
+                // A hack can end on a defeat, a stop or a disconnect with a
+                // rejection still ungraded. Dropping it would quietly bias the
+                // measured accuracy upwards, so it goes out unconfirmed.
+                if (this.current && this.current.rejected) {
+                    oracle.report(this.current.rejected.reading, false, null);
+                }
                 this.current = null;
             }
         },
@@ -1567,7 +1585,8 @@
             let forceAsk = false;
             this.current = {
                 name: target.username || target.id, port, tries,
-                progress: 0, image, word: null, btc: 0, startedAt: now()
+                progress: 0, image, word: null, btc: 0, startedAt: now(),
+                rejected: null    // reading refused by the server, not yet graded
             };
             ui.log(`hacking ${target.username || target.id} on port ${port} (${tries} tries)`);
             ui.status();
@@ -1581,14 +1600,6 @@
                 this.lastOracle = null;      // only the reading for *this* word
                 const word = await this.resolveWord(image, forceAsk);
                 if (!word || !this.running) return 'abort';
-
-                // The real word for a rejected reading only exists here, one
-                // iteration after the rejection. Grading it any earlier is what
-                // made the log record the engine's own guess as confirmed.
-                if (this.pendingReport) {
-                    oracle.report(this.pendingReport, false, word);
-                    this.pendingReport = null;
-                }
 
                 const typo = this.maybeTypo(word, tries);
                 const sent = typo || word;
@@ -1606,12 +1617,22 @@
                 this.record({ kind: 'word', ms: now() - t0, len: sent.length,
                               ok: out.effect !== 'failed' });
 
+                if (out.effect !== 'failed' && this.current.rejected) {
+                    // Only an acceptance confirms anything, and only for the
+                    // image it was shown against: the server keeps the same word
+                    // up after a miss, but if it ever advanced, pairing the old
+                    // reading with this word would fabricate the very thing this
+                    // log exists to measure.
+                    const r = this.current.rejected;
+                    oracle.report(r.reading, false, r.image === image ? sent : null);
+                    this.current.rejected = null;
+                }
                 if (this.lastOracle && this.lastOracle.text === sent) {
-                    // On success the word the server took is the confirmation.
-                    // On failure nobody knows the real word yet, so the verdict
-                    // waits for the retry rather than inventing one.
-                    if (out.effect === 'failed') this.pendingReport = this.lastOracle;
-                    else oracle.report(this.lastOracle, true, sent);
+                    if (out.effect === 'failed') {
+                        this.current.rejected = { reading: this.lastOracle, image };
+                    } else {
+                        oracle.report(this.lastOracle, true, sent);
+                    }
                     this.lastOracle = null;
                 }
                 if (typeof out.tries_left === 'number') tries = out.tries_left;
@@ -2066,7 +2087,8 @@
                         try {
                             const r = await game.reroll();
                             if (r && r.npcList) ui.log('NPC list rerolled');
-                        } catch (e) { }
+                        } catch (e) { }   // a failed reroll just falls through
+                                          // to the wait below and is retried
                     }
                     ui.log('no target available, waiting…', true);
                     await this.idle(4000);
@@ -2358,6 +2380,9 @@ polyline{fill:none;stroke:var(--fg);stroke-width:1.5;vector-effect:non-scaling-s
 
         build() {
             const d = this.win.document;
+            // Into the popup this script opened itself, never the game page:
+            // it is the only way to seed a same-origin about:blank window
+            // synchronously, before anything can navigate it.
             d.open();
             d.write('<!doctype html><html><head><meta charset="utf-8">' +
                 '<title>autohack console</title><style>' + CONSOLE_CSS + '</style></head><body>' +

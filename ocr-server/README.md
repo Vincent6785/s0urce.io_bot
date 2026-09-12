@@ -1,5 +1,7 @@
 # Local OCR oracle
 
+*Part of [s0urce.io — Auto Hack userscript](../README.md); this page covers the sidecar only.*
+
 A small server that the userscript queries **only** when its glyph dictionary and its lexicon
 were not enough — a handful of times per session at most. It saves you from typing words by
 hand, and therefore from a session stalling while unattended.

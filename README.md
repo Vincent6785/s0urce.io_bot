@@ -343,15 +343,17 @@ Keep WPM plausible — the server records it and shows it to your victims.
   installs only when the version is strictly greater. So a change to the script
   body without a bump reaches **nobody**, permanently — while a bump reaches
   **everybody** on the next check, with whatever else is in that push. There is
-  no staging branch between a commit and every installed copy. Bump `@version`
-  and `package.json` together in the same commit (CI checks that they match),
-  and tag it: the tag is the only durable record of what a given version was.
+  no staging branch between a commit and every installed copy. So: bump
+  `@version` and `package.json` together in the same commit, and tag it — the
+  tag is the only durable record of what a given version was. CI enforces only
+  that the two numbers **match**; that a body change comes with a bump is a
+  discipline, not something the pipeline can catch for you.
 
 ## Tests
 
     ./test/run.sh
 
-**219 assertions over nine suites** on a fresh clone, **227** when the optional
+**221 assertions over nine suites** on a fresh clone, **229** when the optional
 `bck` dictionary fixture is present — the eight extra ones live in
 `ocr_perf_test.js` and are skipped without it. Exit code 0 either way, with no
 browser, no tesseract, no ollama and no network:
@@ -397,8 +399,9 @@ The oracle suites never touch the engines installed on the machine: Ollama is
 pointed at a dead port and `tesseract` at the fake binary. Before that isolation,
 installing Ollama for real was enough to break them.
 
-The suites read the userscript directly through `test/extract.js`, so they can
-never run against a stale copy — an earlier generated-module step did exactly
+Every suite reads the userscript directly — four of them pull individual objects
+out of it through `test/extract.js`, the other five evaluate the whole file — so
+none can run against a stale copy. An earlier generated-module step did exactly
 that once, and passed while testing old code.
 
 A suite that hangs is killed after 180 s by `test/run.sh`, which names the one
@@ -409,7 +412,7 @@ one — the timeout in `run.sh` is what covers all nine.
 
 One assertion shells out to `pgrep` to prove that hanging up kills the OCR
 engines. Where `pgrep` is absent — slim containers, most notably — it is
-skipped and announced, not failed, so the total drops by one.
+skipped and announced rather than failed, so the total drops by one there.
 
 ## Known limitations
 

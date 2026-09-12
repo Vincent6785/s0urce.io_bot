@@ -3,6 +3,6 @@
 # CRLF and produce a whole-file diff. This is the rule that actually binds.
 * text=auto eol=lf
 
-# Executable fixtures: the mode matters, the suite fails without it.
-test/run.sh            text eol=lf
-test/fakebin/tesseract text eol=lf
+# The executable bit on test/run.sh and test/fakebin/tesseract comes from the
+# index (both are 100755) -- .gitattributes cannot carry a file mode, so there
+# is nothing to declare here for it.

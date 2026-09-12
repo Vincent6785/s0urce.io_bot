@@ -3,7 +3,7 @@
 const fs = require('fs'), path = require('path');
 const makeOcr = require('./extract.js').ocr;
 
-let pass = 0, fail = 0;
+let pass = 0, fail = 0, skipped = 0;
 const check = (name, cond, extra) => {
   cond ? pass++ : fail++;
   console.log((cond ? 'ok  ' : 'FAIL') + '  ' + name +
@@ -133,6 +133,7 @@ function render(word, noise) {
           JSON.stringify(again.glyphs) === JSON.stringify(bck.glyphs) &&
           JSON.stringify(again.words) === JSON.stringify(bck.words));
   } else {
+    skipped = 8;   // keep in step with the assertions inside the branch above
     console.log('   (no bck file — real-data tests skipped)');
   }
 
@@ -235,6 +236,6 @@ function render(word, noise) {
           ocr3.fromVocabulary('a.…*c', [2]) === 'a.b*c' && ocr3.fromVocabulary('aX…*c', [2]) === null);
   }
 
-  console.log(`\n${pass} passed, ${fail} failed`);
+  console.log(`\n${pass} passed, ${fail} failed` + (skipped ? `, ${skipped} skipped` : ''));
   process.exit(fail ? 1 : 0);
 })();

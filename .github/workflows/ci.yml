@@ -50,7 +50,9 @@ jobs:
         run: |
           head -30 s0urce-autohack.user.js | grep -q '^// ==UserScript==' \
             || { echo "missing UserScript metadata block"; exit 1; }
-          us=$(grep -m1 -oP '^// @version\s+\K\S+' s0urce-autohack.user.js)
+          # `|| true`: under bash -e a failing grep would kill the step on its
+          # own exit code, and the explicit message below would never print.
+          us=$(grep -m1 -oP '^// @version\s+\K\S+' s0urce-autohack.user.js || true)
           pk=$(node -p "require('./package.json').version")
           echo "userscript=$us  package.json=$pk"
           [ -n "$us" ] || { echo "no @version in the metadata block"; exit 1; }
