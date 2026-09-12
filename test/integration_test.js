@@ -1,7 +1,6 @@
 const { MockWS, mockWindow } = require('./env.js');
 const fs = require('fs');
 
-// load the userscript into this environment
 const src = fs.readFileSync(require('path').join(__dirname, '..', 's0urce-autohack.user.js'), 'utf8');
 eval(src);
 
@@ -156,10 +155,10 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
     if (askCalls === 2) return null;
     return { engine: 'glm-ocr', text: 'correct' };
   };
-  // Nothing had ever tested WHEN a feedback line is emitted -- only its shape,
-  // by calling report() directly. env.js seeds oracleEnabled false, so this
-  // whole path was dead in every integration run, which is how three releases
-  // shipped a logger that lost or invented lines.
+  // Nothing else tests WHEN a feedback line is emitted -- only its shape, by
+  // calling report() directly. env.js seeds oracleEnabled false, so this path
+  // is otherwise dead in every integration run; that is why it is flipped on
+  // here and driven through a real hack.
   const feedback = [];
   const savedFetch = global.fetch;
   global.fetch = async (url, init) => {
@@ -189,12 +188,9 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
   }, 2);
 
   bot.stats.wins = 0;
-  // Drive the guard instead of asserting the state it happens to be in. Only
-  // "not running, previous loop still unwinding" reaches the second branch of
-  // start(); the old assertion never called start() twice at all.
-  // Differential: the same call, twice, with loopActive as the only difference.
-  // Asserting `running === false` alone would also pass if start() had bailed
-  // for one of its other reasons.
+  // The same call twice, with loopActive as the only difference: `running ===
+  // false` alone would also pass if start() had bailed for any of its other
+  // three reasons.
   bot.loopActive = true;
   bot.start();
   const heldBack = bot.running === false;
@@ -332,9 +328,9 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
   } catch (e) { threw = e; }
   check('every tab renders without throwing', threw === null, threw && threw.stack);
 
-  // The per-engine counts were accumulated and never displayed for a whole
-  // release: rendering with an empty `engines` map, as every other render
-  // test does, cannot see that.
+  // The per-engine counts only render when `engines` is non-empty, and every
+  // other render test passes an empty map -- so this is the only assertion
+  // that can see them.
   const dash = stats => {
     A.oracle.stats = stats;
     A.panel.select('dash'); A.panel.render();
@@ -444,8 +440,8 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
   cfg.minRequestGap = 0;
   let sentBefore = ws.sent.length;
   // Fire and forget, like the paced block below. Nothing acks these, so
-  // awaiting them waits out three 20 s request deadlines -- 20 s of a 21 s
-  // suite. The claim is about frames reaching the wire, observable at once.
+  // awaiting them would wait out three 20 s request deadlines. The claim is
+  // about frames reaching the wire, which is observable at once.
   [A.emit({ event: 'a' }), A.emit({ event: 'b' }), A.emit({ event: 'c' })]
     .forEach(p => p.catch(() => {}));
   await sleep(30);

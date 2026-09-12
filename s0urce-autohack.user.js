@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         s0urce.io — Auto Hack
 // @namespace    https://github.com/Vincent6785
-// @version      1.0.2
+// @version      1.0.3
 // @description  Full gameplay automation for s0urce.io: target selection, port attack, word OCR + typing, loot handling, idle-agent claiming. Self-training image OCR (the game sends every word as a PNG).
 // @author       Vincent Calmes-Portier
 // @license      MIT
@@ -229,7 +229,7 @@
         { key: 'shredRare', group: 'Items', label: '· shred rare', type: 'bool' },
         { key: 'shredEpic', group: 'Items', label: '· shred epic', type: 'bool' },
         { key: 'autoEquip', group: 'Items', label: 'auto-equip gear', type: 'bool',
-          help: 'measures hackDamage, reverts if it drops' },
+          help: 'keeps a swap only if it strictly improves the damage stats' },
         { key: 'equipTrials', group: 'Items', label: '· swaps per pass', type: 'number',
           min: 1, max: 30 },
         { key: 'autoUpgrade', group: 'Items', label: 'upgrader', type: 'bool',
@@ -237,7 +237,7 @@
         { key: 'autoPrint', group: 'Items', label: '3D printer', type: 'bool' },
         { key: 'printerUpgrade', group: 'Items', label: '· upgrade printer', type: 'bool' },
         { key: 'printItemId', group: 'Items', label: '· item to print', type: 'text',
-          help: 'blank = the last id you printed by hand' },
+          help: 'blank = the first id learned from your own prints' },
 
         { key: 'oracleEnabled', group: 'OCR oracle', label: 'use the local oracle', type: 'bool',
           help: 'reads unknown words so the bot never waits for you' },
@@ -280,7 +280,7 @@
         ws: null,
         rawSend: null,
         connected: false,
-        ready: false,         // socket.io CONNECT seen on this connection
+        ready: false,         // transport is live — see onIncoming, not CONNECT
         generation: 0,        // bumped on every disconnect
         nextAck: 1,
         maxClientAck: 0,      // highest ack id the real client has used
@@ -404,7 +404,8 @@
             event: (req && req.event) || '?', bytes: data.length, summary: redact(res)
         });
 
-        // every response that moves the balance carries this
+        // Balances arrive three ways: `btcUpdate` on most acks,
+        // `player_progress.btc` on some, and the `updateBtc` push.
         if (res && res.btcUpdate) wallet.absorb(res.btcUpdate);
         if (res && res.player_progress && typeof res.player_progress.btc === 'number') {
             wallet.absorb({ btc: res.player_progress.btc, btcPerSecond: wallet.perSecond });
@@ -947,9 +948,8 @@
             let data;
             try { data = JSON.parse(text); } catch (e) { throw new Error('not valid JSON'); }
             if (!data || typeof data !== 'object') throw new Error('not a backup');
-            // `v` was written on export and never read back, which made it a
-            // decoration rather than a format guard. A newer format would
-            // otherwise be half-imported by the shape sniffing below.
+            // A format guard, not decoration: without it a newer export would
+            // be half-imported by the shape sniffing below.
             if (Number(data.v) > 1) {                 // a string "2" counts too
                 throw new Error('backup from a newer version (v' + data.v + ')');
             }
@@ -1258,8 +1258,7 @@
                 this.stats.rejected++;
                 // `discarded` carries the readings the server refused to offer
                 // -- the two tesseract modes when they disagree. They are the
-                // most informative thing in a failed resolution, and until now
-                // nothing ever looked at them.
+                // most informative thing in a failed resolution.
                 const seen = [].concat((res && res.readings) || [],
                                        (res && res.discarded) || [])
                     .filter(r => r && typeof r === 'object')
@@ -1280,12 +1279,11 @@
             return best;
         },
 
-        // One line per word actually sent: who produced it, what they read,
-        // and whether the game took it. Deliberately no "and the real word
-        // was..." field: that is only knowable later, sometimes never, and
-        // carrying it across iterations is what produced three successive
-        // bugs. A line whose engine is `user` and which was accepted is itself
-        // the correct answer, with nothing to reconcile.
+        // One line per word sent: who read it, what they read, whether the game
+        // took it. Deliberately no "and the real word was..." field -- that is
+        // only knowable later, sometimes never, and anything carried across
+        // iterations would have to be invalidated on every early return. A line
+        // whose engine is `user` and which was accepted is itself the answer.
         report(source, accepted) {
             // Deliberately not gated on `offline`. When the oracle is down,
             // resolveWord falls through to asking you -- so the line that gets
@@ -1387,9 +1385,9 @@
     };
 
     /* ----------------------------------------------------------------------
-     * Wallet. Every response that touches the balance carries `btcUpdate`, and
-     * BTC accrues continuously, so the balance is projected forward from the
-     * last update exactly as the game client does.
+     * Wallet. The balance arrives on several different shapes of response, so
+     * everything funnels through `absorb`. BTC also accrues continuously, so
+     * it is projected forward from the last update, as the game client does.
      * -------------------------------------------------------------------- */
     const wallet = {
         btc: 0, perSecond: 0, at: 0, known: false,
@@ -1622,12 +1620,9 @@
                               ok: out.effect !== 'failed' });
 
                 if (this.wordSource && this.wordSource.text === sent) {
-                    // One line, written now. The verdict is known here and
-                    // nothing has to survive into the next iteration, which is
-                    // where three attempts at pairing a reading with "the real
-                    // word" kept losing or inventing data. A typo of our own
-                    // making leaves sent !== the source text, so the engine is
-                    // never blamed for our fumble.
+                    // Written here, while the verdict is known. A deliberate
+                    // typo leaves sent !== the source text, so the engine is
+                    // never blamed for our own fumble.
                     oracle.report(this.wordSource, out.effect !== 'failed');
                     this.wordSource = null;
                 }
@@ -1641,8 +1636,9 @@
                     forceAsk = false;
                 } else if (out.effect === 'failed') {
                     // The server keeps the SAME word on screen after a miss, so
-                    // re-sending our reading would just burn every try. Drop the
-                    // bad entry and get the real word from the user instead.
+                    // re-sending our reading would just burn every try. Forget
+                    // the bad entry and read it again from scratch: the oracle
+                    // is asked with no pattern, and only then you.
                     ui.log(`"${word}" rejected (${tries} tries left)`);
                     this.stats.misses++;
                     await ocr.forget(image);
@@ -2008,10 +2004,9 @@
             const res = await game.printItem(id);
             if (res && res.notification_success) {
                 ui.log(`printed ${id}`);
-                // Printer ids are learned by watching the page client's own
-                // sends, and the bot's frames go out through rawSend, which
-                // bypasses that hook -- so it never learned from its own
-                // prints. A configured id now teaches itself.
+                // Printer ids are learned by hooking the page client's ws.send;
+                // the bot's own frames leave through rawSend and bypass it, so
+                // a configured id is recorded here explicitly.
                 if (this.knownPrints.indexOf(id) === -1) {
                     this.knownPrints.push(id);
                     LS.set(K_PRINTS, this.knownPrints);
@@ -2497,9 +2492,8 @@ polyline{fill:none;stroke:var(--fg);stroke-width:1.5;vector-effect:non-scaling-s
             setText(n.stGlyphs, String(Object.keys(ocr.glyphs).length));
             setText(n.stMisses, String(s.misses));
             const o = oracle.stats;
-            // The per-engine counts were accumulated and never shown. With more
-            // than one engine behind the oracle, which one earned the answer is
-            // the part of this number actually worth reading.
+            // With more than one engine behind the oracle, which one earned the
+            // answer is the part of this number worth reading.
             const per = Object.keys(o.engines).map(k => `${k} ${o.engines[k]}`).join(', ');
             setText(n.stOracle,
                     o.asked ? `${o.accepted}/${o.asked}${per ? ` (${per})` : ''}` : '—');

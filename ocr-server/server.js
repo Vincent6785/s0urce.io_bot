@@ -6,10 +6,11 @@
  * dictionary and lexicon both come up short — a handful of times per session at
  * most. Two engines are tried in order of cost:
  *
- *   1. tesseract  (~50 ms)   run twice, as a line (psm 7) and as a single word
+ *   1. tesseract  (~73 ms)   run twice, as a line (psm 7) and as a single word
  *      (psm 8); a reading is only offered when both modes agree
  *   2. a vision model via Ollama, only if tesseract produced nothing that fits
- *      the hint (measured: ~0.7 s on a GPU, ~27 s on CPU)
+ *      the hint (~46 ms on a GPU for the default model; the first load takes
+ *      seconds, and a CPU-only host is far slower — hence the 45 s ceiling)
  *
  * No dependencies: http + child_process + the built-in fetch. The image arrives
  * already upscaled from the browser, which is what keeps this file free of any
@@ -57,8 +58,8 @@ const OLLAMA_TIMEOUT = Number(process.env.OLLAMA_TIMEOUT || 45000);
 const MAX_OCR_BODY = 3 << 20;        // an upscaled word image is ~30 KB
 const MAX_FEEDBACK_BODY = 4 << 10;
 const MAX_IMAGE_BYTES = 2 << 20;
-const MAX_PATTERN = 64;              // see holeRegex: the cost is exponential
-const MAX_HOLES = 8;
+const MAX_PATTERN = 64;              // bounds the literal part of the pattern
+const MAX_HOLES = 8;                 // see holeRegex: the cost is exponential here
 const MAX_READING = 64;              // engine output feeds the regex
 const MAX_CONCURRENT = 4;            // each /ocr spawns two processes
 const HEALTH_CACHE_MS = 10000;
@@ -331,12 +332,9 @@ async function handleOcr(body, signal) {
   // psm 8 to agree accepts 35% but 95% are right, and false accepts drop from
   // 5 to 2. Behind a vision model that trade is the right one — a non-answer
   // just escalates, while a wrong answer burns a try and skips the model.
-  // No per-request charset. No client ever sent one, and a knob any page can
-  // reach is surface for nothing; OCR_CHARSET still configures it.
-  const charset = CHARSET;
   const [line, word] = await Promise.all([
-    runTesseract(img.buf, charset, 7, signal),
-    runTesseract(img.buf, charset, 8, signal)
+    runTesseract(img.buf, CHARSET, 7, signal),
+    runTesseract(img.buf, CHARSET, 8, signal)
   ]);
   const discarded = [];
   if (line && line === word) {

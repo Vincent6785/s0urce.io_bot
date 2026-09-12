@@ -77,7 +77,7 @@ ocr.toMask = async (tag) => render(tag);
   r = await ocr.recognize('noisy');
   check('fuzzy match survives 2 flipped pixels', r.word === 'abc');
 
-  // 8. forget removes what we learned
+  // 8.
   ocr.toMask = async (tag) => render(tag);
   await ocr.forget('abc');
   r = await ocr.recognize('abc');
@@ -88,8 +88,8 @@ ocr.toMask = async (tag) => render(tag);
   await ocr.learn('abc', 'abc');
   const dump = JSON.stringify(ocr.exportData());
   const glyphCount = Object.keys(ocr.glyphs).length;
-  // `dump.includes('"words"')` was guaranteed by the key name alone, and
-  // glyphCount measures the live object rather than the export.
+  // Assert the parsed export, not the serialized string: a substring check
+  // passes on the key name alone, and glyphCount measures the live object.
   const parsed = JSON.parse(dump);
   check('the export itself carries the glyphs and the word',
         glyphCount === 3 && Object.keys(parsed.glyphs).length === 3 &&

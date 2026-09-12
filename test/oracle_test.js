@@ -20,7 +20,7 @@ const realFetch = global.fetch;
 (async () => {
   cfg.oracleEnabled = true;
   cfg.oracleTimeoutMs = 800;
-  // the canvas work is covered separately; keep it out of the cascade tests
+  // the canvas work is covered in section 8; keep it out of the cascade tests
   let sentPayload = null;
   ocr.upscaledPng = async () => 'data:image/png;base64,AAAA';
 
@@ -238,8 +238,8 @@ const realFetch = global.fetch;
   check('the feedback endpoint follows the configured path',
         seen[0] === 'http://127.0.0.1:8787/feedback' &&
         seen[1] === 'http://127.0.0.1:9999/api/v2/feedback', JSON.stringify(seen));
-  // No test ever looked inside the payload, which is how `word` spent a whole
-  // release carrying the engine's own reading and calling it confirmed.
+  // The payload shape is the contract: an engine's reading is not ground
+  // truth, so no `word`/`confirmed` field may come back.
   seen.length = 0; bodies.length = 0;
   oracle.report({ engine: 'tesseract', text: 'expolit' }, false);
   oracle.report({ engine: 'user', text: 'exploit' }, true);
@@ -369,10 +369,9 @@ const realFetch = global.fetch;
         srv.sanitizeCharset('') === null && srv.sanitizeCharset(null) === null);
 
   /* ---- hardening, proven against a live server rather than by reading it ----
-   * Every case below is one a hostile page can actually produce. The earlier
-   * version of the oversize check swallowed connection errors into a fake 400,
-   * so it passed while the server was in fact resetting the socket; these
-   * assert the status the caller really receives.
+   * Every case below is one a hostile page can actually produce, and each
+   * asserts the status the caller really receives -- not one the test itself
+   * constructed from a swallowed connection error.
    */
   const post = (p, body, headers) => realFetch(base + p, {
     method: 'POST',
@@ -465,9 +464,8 @@ const realFetch = global.fetch;
       return +cp.execSync("pgrep -fc 'slee[p] " + DUR + "'").toString().trim();
     } catch (e) { return 0; }
   };
-  // Polled rather than slept: a spawn slower than a fixed 700 ms would have
-  // counted zero engines and blamed the server for a scheduling delay -- the
-  // same misattribution the pgrep probe above exists to prevent. Also faster,
+  // Polled rather than slept: a spawn slower than a fixed wait would count
+  // zero engines and blame the server for a scheduling delay. Also faster,
   // since both conditions usually hold within a few hundred ms.
   const until = async (fn, ms) => {
     const end = Date.now() + ms;
@@ -491,8 +489,6 @@ const realFetch = global.fetch;
           running >= 1 && survivors === 0,
           `in flight ${running}, still alive ${survivors}`);
   } else {
-    // Without this the catch in engines() returned 0, the assertion failed, and
-    // the message blamed the server for a missing binary.
     console.log('skip  a caller that hangs up leaves no engine running (no pgrep)');
   }
 
@@ -524,8 +520,6 @@ const realFetch = global.fetch;
   });
   check('/feedback accepts', (await fb.json()).ok === true);
   const logged = fs.readFileSync(logfile, 'utf8').trim().split('\n').map(JSON.parse);
-  // The absence matters as much as the presence: this is the only place a
-  // reinstated `confirmed` field would be caught.
   // Any page on the machine can POST here, and the log is an append-only file
   // on disk: the cap is what keeps it bounded and parseable.
   await realFetch(base + '/feedback', {

@@ -3,6 +3,27 @@
 The userscript auto-updates from `main`, so an installed copy has no other way
 to learn what changed. That is what this file is for.
 
+## 1.0.3
+
+### Fixed
+
+- **Two settings described themselves incorrectly.** *item to print* said a
+  blank field meant "the last id you printed by hand" — it is the **first** id
+  ever learned. *auto-equip gear* said it "reverts if it drops", when a swap is
+  in fact kept only if it strictly improves damage, true damage, armour
+  penetration and crit, in that order.
+
+### Documentation
+
+- Corrected comments that no longer matched the code: the wallet claimed a
+  single source for balance updates where there are three, `bus.ready` was
+  documented as "CONNECT seen" on a transport where CONNECT never arrives, the
+  server header quoted the previous vision model's latency, and the ReDoS
+  warning was attached to the wrong constant.
+- Removed references to the project's own development history — counts of past
+  attempts and of earlier releases — which a reader has no way to check. The
+  hazard each one guarded is kept; only the anecdote is gone.
+
 ## 1.0.2
 
 ### Fixed

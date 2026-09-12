@@ -39,10 +39,10 @@ function server() {
 const sentEvents = s => s.seen.map(r => r.event);
 const only = (s, ev) => s.seen.filter(r => r.event === ev);
 
-// an inventory snapshot payload with `n` copies of one item plus free slots
-// Equipment and machine slots (gpu, upgrader_*, ai_sell…) travel in this payload
-// next to the inventory map. Earlier mocks put them in player_profile — where the
-// client never reads them — and the tests passed while the real loops could not.
+// An inventory snapshot: `n` copies of one item plus free slots. Equipment and
+// machine slots (gpu, upgrader_*, ai_sell…) travel in this payload next to the
+// inventory map, never in player_profile — the client does not read them there,
+// which is pinned by the slot test further down.
 function inventory(items, freeCount, slots) {
   const map = {};
   items.forEach((it, i) => { map['slot_' + i] = it; });
@@ -272,7 +272,7 @@ const gear = (id, type, rarity, extra) =>
         only(s, 'printItem').length === 0, JSON.stringify(sentEvents(s)));
   s.stop();
 
-  // --- 9b. fixes after a real session: requests the server never answers ---
+  // --- 9b. chores that must not fire, and requests that go unanswered ----
   // Season pass: a reached tier with no reward entry is never claimed.
   s = server();
   bot.premium = false;
@@ -335,8 +335,8 @@ const gear = (id, type, rarity, extra) =>
   bot.doSeasonPass = realSeason;
   Object.assign(cfg, savedCfg);
 
-  // The value, asserted directly. Waiting the 8 s out proved only "somewhere
-  // between 7.5 and 12 s", and cost a fifth of the whole suite's runtime.
+  // Assert the values directly: waiting one out proves only that it lands in a
+  // wide band, and costs the suite eight seconds.
   bot.chore = 'probe';
   const choreTimeout = A.defaultTimeout();
   bot.chore = null;

@@ -5,7 +5,7 @@
 # in-process watchdog, but not every suite loads it, and the two most likely to
 # hang -- ocr_perf_test (set cover over the whole dictionary) and
 # oracle_server_test (spawns processes, binds sockets) -- are not among them.
-# Here it covers all nine and names the one that hung.
+# Here it covers every suite and names the one that hung.
 set -e
 cd "$(dirname "$0")"
 

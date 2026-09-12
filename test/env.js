@@ -72,9 +72,9 @@ win.location = { reload() { win.location.reloaded = true; } };
 win.addEventListener = () => {};
 win.navigator = { userAgent: 'node' };
 
-// A suite that hangs used to hold the runner until its outer timeout — ten
-// minutes of nothing. Fail fast and say which suite it was instead. Every suite
-// ends with an explicit process.exit, so a ref'd timer costs nothing.
+// A suite that hangs would otherwise run until the CI job's own limit. Fail
+// fast and say which suite it was instead. Every suite ends with an explicit
+// process.exit, so a ref'd timer costs nothing.
 const WATCHDOG_MS = Number(process.env.TEST_WATCHDOG_MS || 180000);
 setTimeout(() => {
   console.log(`\nWATCHDOG: still running after ${WATCHDOG_MS / 1000}s — giving up`);
