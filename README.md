@@ -99,7 +99,8 @@ separate stores.
 The server renders each word slightly differently every time, so the same letter
 produces many distinct bitmaps — one real dictionary, the author's own after a
 few sessions, held **3214 entries for 44 characters**, 289 of them for `e`
-alone, and 98% of those were redundant. Every figure in this section was
+alone — and compaction later removed 82% of that dictionary without losing a
+single recognition. Every figure in this section was
 measured once, on that one dictionary: it is a sample, not a guaranteed
 outcome, and it is not shipped — you train your own.
 
@@ -253,7 +254,8 @@ in it, or to sell from an empty AI market slot, gets no reply at all rather than
 an error. During housekeeping such a request gives up after 8 s, and that step
 is paused for 5 minutes, doubling up to 30, instead of stalling every pass.
 Refusals the server does explain arrive as notifications, which now show in the
-Log as `server error: …`.
+Log as `server <status>: …` — `server error:` when it says so, `server notice:`
+otherwise.
 
 Equipment and machine slots (`gpu`, `upgrader_*`, `ai_sell`…) are read from the
 inventory payload, which is where the game client reads them too — not from
@@ -353,7 +355,7 @@ Keep WPM plausible — the server records it and shows it to your victims.
 
     ./test/run.sh
 
-**221 assertions over nine suites** on a fresh clone, **229** when the optional
+**224 assertions over nine suites** on a fresh clone, **232** when the optional
 `bck` dictionary fixture is present — the eight extra ones live in
 `ocr_perf_test.js` and are skipped without it. Exit code 0 either way, with no
 browser, no tesseract, no ollama and no network:
@@ -399,16 +401,19 @@ The oracle suites never touch the engines installed on the machine: Ollama is
 pointed at a dead port and `tesseract` at the fake binary. Before that isolation,
 installing Ollama for real was enough to break them.
 
-Every suite reads the userscript directly — four of them pull individual objects
-out of it through `test/extract.js`, the other five evaluate the whole file — so
-none can run against a stale copy. An earlier generated-module step did exactly
-that once, and passed while testing old code.
+Eight of the nine suites read the userscript directly — some pull individual
+objects out of it through `test/extract.js`, some evaluate the whole file, and
+`oracle_test` does both — so none can run against a stale copy. An earlier
+generated-module step did exactly that once, and passed while testing old code.
+The ninth, `oracle_server_test`, exercises the sidecar and never loads the
+userscript at all.
 
 A suite that hangs is killed after 180 s by `test/run.sh`, which names the one
 that hung instead of holding the runner until some outer timeout.
-`TEST_WATCHDOG_MS` overrides that value. `test/env.js` carries a second,
-in-process watchdog, but only the four suites that load it are covered by that
-one — the timeout in `run.sh` is what covers all nine.
+`TEST_WATCHDOG_MS` overrides that value; it must be a whole number of
+milliseconds, and anything under a second is floored to one. `test/env.js`
+carries a second, in-process watchdog, but only the suites that load it are
+covered by that one — the timeout in `run.sh` is what covers all nine.
 
 One assertion shells out to `pgrep` to prove that hanging up kills the OCR
 engines. Where `pgrep` is absent — slim containers, most notably — it is

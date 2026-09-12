@@ -198,16 +198,17 @@ const realFetch = global.fetch;
   // No test ever looked inside the payload, which is how `word` spent a whole
   // release carrying the engine's own reading and calling it confirmed.
   seen.length = 0; bodies.length = 0;
-  oracle.report({ engine: 'tesseract', text: 'expolit' }, false, null);
-  oracle.report({ engine: 'glm-ocr', text: 'exploit' }, true, 'exploit');
+  oracle.report({ engine: 'tesseract', text: 'expolit' }, false);
+  oracle.report({ engine: 'user', text: 'exploit' }, true);
   await sleep(5);
-  check('a rejection nobody confirmed reports no word at all',
-        !!bodies[0] && bodies[0].reading === 'expolit' &&
-        bodies[0].word === null && bodies[0].accepted === false,
+  check('a refused reading is logged against its engine, and nothing else',
+        !!bodies[0] && bodies[0].engine === 'tesseract' &&
+        bodies[0].reading === 'expolit' && bodies[0].accepted === false &&
+        !('word' in bodies[0]) && !('confirmed' in bodies[0]),
         JSON.stringify(bodies[0]));
-  check('an accepted reading reports the word the server took',
-        !!bodies[1] && bodies[1].reading === 'exploit' &&
-        bodies[1].word === 'exploit' && bodies[1].accepted === true,
+  check('an accepted line from the user is the correct word by itself',
+        !!bodies[1] && bodies[1].engine === 'user' &&
+        bodies[1].reading === 'exploit' && bodies[1].accepted === true,
         JSON.stringify(bodies[1]));
 
   cfg.oracleUrl = 'http://127.0.0.1:8787/ocr';

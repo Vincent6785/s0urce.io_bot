@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         s0urce.io — Auto Hack
 // @namespace    https://github.com/Vincent6785
-// @version      1.0.0
+// @version      1.0.1
 // @description  Full gameplay automation for s0urce.io: target selection, port attack, word OCR + typing, loot handling, idle-agent claiming. Self-training image OCR (the game sends every word as a PNG).
 // @author       Vincent Calmes-Portier
 // @license      MIT
@@ -1043,8 +1043,10 @@
                 for (let i = 0; i < segments.length; i++) {
                     const seg = segments[i], ch = word[i];
                     // The render varies from image to image, so storing every
-                    // variant grows the dictionary without bound — it was 98%
-                    // redundant. Keep only what is not already comfortably
+                    // variant grows the dictionary without bound, and most of
+                    // it earns nothing: on one real dictionary, compaction
+                    // later removed 82% of the entries without losing a single
+                    // recognition. Keep only what is not already comfortably
                     // recognised; half the budget still lets genuinely new
                     // shapes in, which is what keeps generalisation alive.
                     const hit = this.lookupDetailed(seg);
@@ -1267,8 +1269,9 @@
                     // a null entry here would throw inside ask() and take the
                     // whole run down, and an endpoint returning thousands of
                     // readings would put one enormous line in the log.
+                    const cut = v => String(v === undefined ? '' : v).slice(0, 64);
                     ui.log('oracle read something that did not fit: ' +
-                           seen.map(r => `${r.engine}="${r.text}"`).join(', '));
+                           seen.map(r => `${cut(r.engine)}="${cut(r.text)}"`).join(', '));
                 }
                 return null;
             }
@@ -1277,20 +1280,19 @@
             return best;
         },
 
-        // Tell the server whether the game accepted the word, and which word it
-        // actually was. `confirmed` stays null until something is genuinely
-        // confirmed -- the retry after a rejection is usually another oracle
-        // reading rather than a human answer, so it proves nothing by itself.
-        // Putting the reading in this field, as this did for one release, makes
-        // every line including the rejections claim the engine had been right.
-        report(reading, accepted, confirmed) {
-            if (!cfg.oracleEnabled || this.offline || !reading) return;
+        // One line per word actually sent: who produced it, what they read,
+        // and whether the game took it. Deliberately no "and the real word
+        // was..." field: that is only knowable later, sometimes never, and
+        // carrying it across iterations is what produced three successive
+        // bugs. A line whose engine is `user` and which was accepted is itself
+        // the correct answer, with nothing to reconcile.
+        report(source, accepted) {
+            if (!cfg.oracleEnabled || this.offline || !source) return;
             fetch(this.endpoint('feedback'), {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({
-                    engine: reading.engine, reading: reading.text,
-                    word: confirmed || null, accepted: !!accepted
+                    engine: source.engine, reading: source.text, accepted: !!accepted
                 })
             }).catch(() => { });
         }
@@ -1412,7 +1414,7 @@
         loopActive: false,
         counterHacked: false,
         current: null,        // live hack, for the Dashboard tab
-        lastOracle: null,     // oracle reading awaiting the server's verdict
+        wordSource: null,     // who produced the current word, for the log
         chore: null,          // housekeeping step in progress
         choreBackoff: {},     // step -> {until, ms} after an unanswered request
         history: [],          // per-word and per-hack samples, for the charts
@@ -1526,7 +1528,7 @@
             const read = await oracle.ask(image, rec, force);
             if (read) {
                 ui.log(`oracle (${read.engine}) read "${read.text}"`);
-                this.lastOracle = read;     // graded once the server answers
+                this.wordSource = { engine: read.engine, text: read.text };
                 return read.text;
             }
 
@@ -1544,6 +1546,10 @@
             // typed, nor take the run down with it.
             try { await ocr.learn(image, typed); }
             catch (e) { ui.log('could not learn that word: ' + e.message); }
+            // You are the only source that cannot be wrong about the word: if
+            // the server takes it, that line IS the correct answer, recorded
+            // without pairing anything to anything.
+            this.wordSource = { engine: 'user', text: typed };
             return typed;
         },
 
@@ -1555,12 +1561,6 @@
                               btc: (this.current && this.current.btc) || 0,
                               ms: now() - startedAt });
             } finally {
-                // A hack can end on a defeat, a stop or a disconnect with a
-                // rejection still ungraded. Dropping it would quietly bias the
-                // measured accuracy upwards, so it goes out unconfirmed.
-                if (this.current && this.current.rejected) {
-                    oracle.report(this.current.rejected.reading, false, null);
-                }
                 this.current = null;
             }
         },
@@ -1585,8 +1585,7 @@
             let forceAsk = false;
             this.current = {
                 name: target.username || target.id, port, tries,
-                progress: 0, image, word: null, btc: 0, startedAt: now(),
-                rejected: null    // reading refused by the server, not yet graded
+                progress: 0, image, word: null, btc: 0, startedAt: now()
             };
             ui.log(`hacking ${target.username || target.id} on port ${port} (${tries} tries)`);
             ui.status();
@@ -1597,7 +1596,7 @@
                 if (this.counterHacked) { ui.log('counter-hacked, aborting'); return 'counterhacked'; }
 
                 this.current.image = image;
-                this.lastOracle = null;      // only the reading for *this* word
+                this.wordSource = null;      // only the source for *this* word
                 const word = await this.resolveWord(image, forceAsk);
                 if (!word || !this.running) return 'abort';
 
@@ -1617,23 +1616,15 @@
                 this.record({ kind: 'word', ms: now() - t0, len: sent.length,
                               ok: out.effect !== 'failed' });
 
-                if (out.effect !== 'failed' && this.current.rejected) {
-                    // Only an acceptance confirms anything, and only for the
-                    // image it was shown against: the server keeps the same word
-                    // up after a miss, but if it ever advanced, pairing the old
-                    // reading with this word would fabricate the very thing this
-                    // log exists to measure.
-                    const r = this.current.rejected;
-                    oracle.report(r.reading, false, r.image === image ? sent : null);
-                    this.current.rejected = null;
-                }
-                if (this.lastOracle && this.lastOracle.text === sent) {
-                    if (out.effect === 'failed') {
-                        this.current.rejected = { reading: this.lastOracle, image };
-                    } else {
-                        oracle.report(this.lastOracle, true, sent);
-                    }
-                    this.lastOracle = null;
+                if (this.wordSource && this.wordSource.text === sent) {
+                    // One line, written now. The verdict is known here and
+                    // nothing has to survive into the next iteration, which is
+                    // where three attempts at pairing a reading with "the real
+                    // word" kept losing or inventing data. A typo of our own
+                    // making leaves sent !== the source text, so the engine is
+                    // never blamed for our fumble.
+                    oracle.report(this.wordSource, out.effect !== 'failed');
+                    this.wordSource = null;
                 }
                 if (typeof out.tries_left === 'number') tries = out.tries_left;
                 this.current.tries = tries;

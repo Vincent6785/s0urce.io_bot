@@ -1,9 +1,8 @@
 {
   "name": "s0urce-autohack",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Gameplay automation for s0urce.io: a Tampermonkey userscript with a self-training OCR, plus an optional local OCR oracle server.",
   "license": "MIT",
-  "private": true,
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Vincent6785/s0urce.io_bot.git"

@@ -2,30 +2,43 @@
 # Runs every suite. Each one reads the userscript directly; nothing is generated.
 #
 # The timeout lives here rather than in the suites: test/env.js carries an
-# in-process watchdog, but only four of the nine suites load it, and the two
-# most likely to hang -- ocr_perf_test (set cover over the whole dictionary)
-# and oracle_server_test (spawns processes, binds sockets) -- are not among
-# them. Here it covers all nine and names the one that hung.
+# in-process watchdog, but not every suite loads it, and the two most likely to
+# hang -- ocr_perf_test (set cover over the whole dictionary) and
+# oracle_server_test (spawns processes, binds sockets) -- are not among them.
+# Here it covers all nine and names the one that hung.
 set -e
 cd "$(dirname "$0")"
 
 # Integer division turns anything under 1000 into `timeout 0s`, which GNU
 # timeout documents as no timeout at all -- so a value meant to tighten the
 # guard would silently remove it, and so would a typo. Reject non-numbers and
-# floor the result at one second.
+# floor the result at one second. TEST_WATCHDOG_MS=0 therefore means one
+# second, not "no timeout".
 MS=${TEST_WATCHDOG_MS:-180000}
 case $MS in
-  ''|*[!0-9]*)
+  *[!0-9]*)
     echo "TEST_WATCHDOG_MS must be a whole number of milliseconds (got '$MS')" >&2
     exit 2
     ;;
 esac
+
+# Leading zeros have to go before the arithmetic: `0900` would abort it with
+# "value too great for base" -- after passing the check above, so the message
+# promised there would never print -- and `00500` would be read as octal,
+# honouring a different number than the caller wrote.
+while [ "${MS#0}" != "$MS" ] && [ -n "${MS#0}" ]; do MS=${MS#0}; done
 SECS=$(( MS / 1000 ))
 if [ "$SECS" -lt 1 ]; then SECS=1; fi
 
 # -k matters: plain timeout only sends TERM, so a suite wedged in a native call
-# would never die -- the exact failure this guard exists to stop.
-if command -v timeout >/dev/null 2>&1; then RUN="timeout -k 10s ${SECS}s"; else RUN=""; fi
+# would never die -- the exact failure this guard exists to stop. It is a GNU
+# extension though, and busybox ships a `timeout` that has `command -v` succeed
+# without accepting it, so probe before relying on it.
+RUN=""
+if command -v timeout >/dev/null 2>&1; then
+  if timeout -k 1s 1s true >/dev/null 2>&1; then RUN="timeout -k 10s ${SECS}s"
+  else RUN="timeout ${SECS}s"; fi
+fi
 
 for t in ocr_test.js ocr_perf_test.js frame_test.js integration_test.js loops_test.js oracle_test.js oracle_server_test.js config_migration_test.js debug_gate_test.js; do
   echo "=== $t ==="

@@ -136,11 +136,35 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
   check('btc accumulated', Math.abs(bot.stats.btc - 0.5) < 1e-9);
   check('loot collected automatically', lootTaken);
 
-  // --- 6. a rejected word is re-asked, not blindly resent ------------------
+  // --- 6. a rejected word is re-asked, and each word logs exactly one line --
   words.length = 0;
   let asked = 0, misses = 0;
   A.ui.askWord = async () => { asked++; return 'correct'; };
-  A.ocr.recognize = async () => ({ word: 'wrong', segments: [], lineHash: 'h' });
+  // The oracle reads before the prompt is ever shown, so failing the dictionary
+  // and letting the oracle answer once stages both sources inside one hack:
+  // the engine gets it wrong, you get it right.
+  A.ocr.recognize = async () => ({ word: null, partial: '', segments: [], lineHash: 'h' });
+  // Wrong once, silent once so the prompt is reached exactly once, then right
+  // for good: the loop starts another hack before stop() lands, and without the
+  // third branch that hack would reach the prompt too and break `asked === 1`.
+  let askCalls = 0;
+  A.oracle.ask = async () => {
+    askCalls++;
+    if (askCalls === 1) return { engine: 'glm-ocr', text: 'wrong' };
+    if (askCalls === 2) return null;
+    return { engine: 'glm-ocr', text: 'correct' };
+  };
+  // Nothing had ever tested WHEN a feedback line is emitted -- only its shape,
+  // by calling report() directly. env.js seeds oracleEnabled false, so this
+  // whole path was dead in every integration run, which is how three releases
+  // shipped a logger that lost or invented lines.
+  const feedback = [];
+  const savedFetch = global.fetch;
+  global.fetch = async (url, init) => {
+    if (String(url).endsWith('/feedback')) feedback.push(JSON.parse(init.body));
+    return { ok: true, json: async () => ({}) };
+  };
+  cfg.oracleEnabled = true;
   clearInterval(pump);
   const pump2 = setInterval(() => {
     for (let i = 0; i < ws.sent.length; i++) {
@@ -183,9 +207,27 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
   while (bot.loopActive) await sleep(10);
   clearInterval(pump2);
 
+  cfg.oracleEnabled = false;
+  global.fetch = savedFetch;
+
   check('asked the user after a rejection', asked === 1, `asked=${asked}`);
   check('did not resend the misread word', words.filter(w => w === 'wrong').length === 1, JSON.stringify(words));
   check('retried with the corrected word', words.includes('correct'), JSON.stringify(words));
+
+  // Holds however many hacks the loop got through before stop(): what matters
+  // is that no line carries a word nobody confirmed.
+  check('every logged line is a verdict, never a claim about the real word',
+        feedback.length >= 2 &&
+        feedback.every(f => !('word' in f) && !('confirmed' in f)),
+        JSON.stringify(feedback));
+  check('the engine is logged against the reading it actually produced',
+        !!feedback[0] && feedback[0].engine === 'glm-ocr' &&
+        feedback[0].reading === 'wrong' && feedback[0].accepted === false,
+        JSON.stringify(feedback[0]));
+  check('the word you typed is logged as yours, and as accepted',
+        !!feedback[1] && feedback[1].engine === 'user' &&
+        feedback[1].reading === 'correct' && feedback[1].accepted === true,
+        JSON.stringify(feedback[1]));
 
   // --- 7. timing model -----------------------------------------------------
   cfg.humanPauses = true; cfg.wpm = 80;

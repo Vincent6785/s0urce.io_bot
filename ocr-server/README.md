@@ -6,7 +6,8 @@ A small server that the userscript queries **only** when its glyph dictionary an
 were not enough — a handful of times per session at most. It saves you from typing words by
 hand, and therefore from a session stalling while unattended.
 
-No dependencies: `http`, `child_process` and Node's built-in `fetch`.
+No dependencies: `http`, `child_process`, `fs`, `path` and Node's built-in `fetch` — all of
+them shipped with Node itself.
 
 ## Requirements
 
@@ -272,12 +273,15 @@ On the userscript side, the address is set in the **Config** tab, under *OCR ora
   two tesseract modes when they disagree, which the console prints. The image arrives
   **already upscaled x4** by the browser: that is what lets this server do without any image
   library.
-- `POST /feedback` — `{engine, reading, word, accepted}` -> one JSONL line, stored as
-  `{t, engine, reading, confirmed, accepted}`. The image is not kept. **`word` is the
-  confirmed word, not the reading**: after a rejection it is what the player typed instead,
-  and that difference is the whole point of the log. A client that sends the reading in both
-  fields produces a file in which every line, rejections included, claims the engine was
-  right -- which is exactly what this client used to do.
+- `POST /feedback` — `{engine, reading, accepted}` -> one JSONL line, stored as
+  `{t, engine, reading, accepted}`. The image is not kept. **One line per word the userscript
+  actually sent**, written as soon as the game answers: who produced the reading, what they
+  read, and whether it was taken. There is deliberately no "and the real word was..." field —
+  that is only knowable later, sometimes never, and three earlier attempts at carrying it
+  across words each lost or invented data. Note `engine` can be `user`: when the dictionary
+  and both engines come up short, the player is asked, and an accepted `user` line **is** the
+  correct word, with nothing to reconcile against it. Words the glyph dictionary read on its
+  own are not logged, since no engine was consulted.
 - `GET /health` — `{ok, engines: {tesseract, ollama, model}, model, origin}`. `ollama` only
   says the API answers; `model` says the configured model is **actually pulled**. Without
   that distinction the server declared itself ready while every vision request failed with a

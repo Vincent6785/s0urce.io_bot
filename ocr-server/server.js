@@ -360,14 +360,15 @@ async function handleOcr(body, signal) {
 }
 
 function handleFeedback(body) {
-  // The image is not stored — the reading and the confirmed word are all that is
-  // needed to measure each engine's accuracy.
+  // The image is not stored, and neither is "the real word": one line per word
+  // sent, saying who read it and whether the game took it, is what measures an
+  // engine. A line whose engine is `user` and which was accepted is the correct
+  // answer on its own, with nothing to pair it against.
   const field = v => (v === undefined || v === null ? null : String(v).slice(0, 64));
   const line = JSON.stringify({
     t: new Date().toISOString(),
     engine: field(body.engine),
     reading: field(body.reading),
-    confirmed: field(body.word),
     accepted: !!body.accepted
   });
   try { fs.appendFileSync(LOGFILE, line + '\n'); } catch (e) { return { ok: false }; }
