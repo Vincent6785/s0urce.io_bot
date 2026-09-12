@@ -163,9 +163,11 @@
         oracleEnabled: true,      // harmless when the server is down: it stands
                                   // down after one failure and asks you instead
         oracleUrl: 'http://127.0.0.1:8787/ocr',
-        // Measured: qwen2.5vl answers in ~27 s per word on CPU (28 s at worst).
-        // A ceiling costs nothing when the answer is fast, whereas one below
-        // the model's latency means the model never answers at all.
+        // Measured: glm-ocr answers in ~46 ms per word on a GPU. The ceiling is
+        // not sized for that case but for the bad ones — a first load takes
+        // seconds, and the previous default needed ~27 s per word on CPU. A
+        // ceiling costs nothing when the answer is fast, whereas one below the
+        // model's latency means the model never answers at all.
         oracleTimeoutMs: 40000,
 
         // --- interface ---

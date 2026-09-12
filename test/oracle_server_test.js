@@ -107,6 +107,42 @@ const ask = (t7, t8, hint) => {
   s2 = fresh('llava');
   await s2.detectEngines();
   check('model actually pulled: recognized', s2.engines.model === true, JSON.stringify(s2.engines));
+
+  // The generation cap is not cosmetic. An OCR model trained on documents keeps
+  // producing structure after the answer: measured at 15 s per word uncapped
+  // against 46 ms capped, for the same final reading, because cleanReading
+  // salvages the first word either way. The cost is invisible in the answer and
+  // only shows in the clock, so it is asserted on the wire instead.
+  let sent = null;
+  const capture = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', c => { body += c; });
+    req.on('end', () => {
+      try { sent = JSON.parse(body); } catch (e) { sent = { bad: body }; }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ response: 'exploit' }));
+    });
+  });
+  await new Promise(r => capture.listen(0, '127.0.0.1', r));
+  process.env.OLLAMA_URL = `http://127.0.0.1:${capture.address().port}`;
+  process.env.OLLAMA_MODEL = 'glm-ocr';
+  delete require.cache[require.resolve('../ocr-server/server.js')];
+  const s3 = require('../ocr-server/server.js');
+  // 1x1 png: no engine can read a word out of it, so the cascade must escalate.
+  const tiny = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ' +
+               'AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const out = await s3.handleOcr({ image: tiny,
+    hint: { pattern: 'expl?it', holeWidth: 3, minLength: 7, maxLength: 9 } });
+  check('the model is asked when tesseract offers nothing that fits',
+        sent !== null && sent.model === 'glm-ocr', JSON.stringify(sent && sent.model));
+  check('the generation is capped, so a verbose model cannot stall the cascade',
+        !!(sent && sent.options && sent.options.num_predict === 24 &&
+           Array.isArray(sent.options.stop) && sent.options.stop[0] === '\n'),
+        JSON.stringify(sent && sent.options));
+  check('a reading that fits the pattern comes back as the word',
+        !!(out && out.word === 'exploit' && out.engine === 'glm-ocr'), JSON.stringify(out));
+  capture.close();
+
   fake.close();
 
   console.log(`\n${pass} passed, ${fail} failed`);

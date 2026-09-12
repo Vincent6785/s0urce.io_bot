@@ -17,8 +17,7 @@ No dependencies: `http`, `child_process` and Node's built-in `fetch`.
 
 ```
 dictionary  ->  vocabulary  ->  tesseract  ->  vision model  ->  manual entry
- (instant)      (instant)       (~50 ms)       (~0.7 s GPU,      (last resort)
-                                                ~27 s CPU)
+ (instant)      (instant)       (~50 ms)       (~46 ms on GPU)   (last resort)
 ```
 
 The vision model is only called when tesseract produced nothing trustworthy.
@@ -32,11 +31,10 @@ the oracle actually gets called):
 
 > **Where these figures come from.** They are single runs on one machine, not a
 > benchmark anyone can reproduce from a clone: the word images belong to a live
-> game session and are not in this repository. The accuracy tables below are over
-> a 120-word sample (tesseract) and a 20-word sample (the cascade) -- small enough
-> that the difference between two draws is sampling noise, as the second draw
-> further down shows. Treat them as the order of magnitude that justified the
-> design, and use the `/feedback` log to measure what actually happens for you.
+> game session and are not in this repository. The table below is over a 120-word
+> sample -- small enough that the difference between two draws is sampling noise.
+> Treat it as the order of magnitude that justified the design, and use the
+> `/feedback` log to measure what actually happens for you.
 
 | strategy | words accepted | correct readings | false accepts |
 | --- | --- | --- | --- |
@@ -59,29 +57,68 @@ The two disagreeing readings are returned in `discarded`, for diagnosis — neve
 `readings`, or the userscript, which accepts any reading compatible with the pattern, would
 work around the agreement rule.
 
+**On the newer sample the rule filtered nothing.** Over the 60 words measured in the next
+section, psm 7 and psm 8 returned the identical string on 60 out of 60 — including the 23
+words where both were wrong together, which agreement cannot catch. That sits awkwardly
+next to the 120-word table above, where requiring agreement cut false accepts from 5 and 9
+down to 2, and the two results are not reconciled here. They are not the same sample: the
+60-word images carry one canonical glyph variant per letter and one blank column between
+letters, so a single baseline and no touching letters — and a varying baseline and touching
+letters are exactly where reading a line and reading a single word would most plausibly
+diverge. The rule costs nothing when it is redundant, so it stays; which of the two pictures
+holds on real captures deserves re-measuring on real captures.
+
 ### Vision model: measured
 
-Same images, 20 words with one unknown letter, `qwen2.5vl` (8.3 B, Q4_K_M) **on CPU**:
+The default is **`glm-ocr`** (0.9 B parameters, 2.2 GB to download, listed by Ollama as
+`glm-ocr:latest`), a model purpose-built for text and document recognition. It replaced
+`qwen2.5vl`, a 7B-class generalist at 6.0 GB. Head to head on the same 60 word images, one
+letter hidden per word, driven through the server's real prompt (bounded length plus hole
+pattern) and its real `cleanReading`:
 
-| | words accepted | correct readings | false accepts |
+| engine | exact readings | false accepts | median |
 | --- | --- | --- | --- |
-| vision model alone | 70 % | 92.9 % | 1 |
-| **cascade: tesseract agreement, then model** | **80 %** | **100 %** | **0** |
+| **`glm-ocr`** | **59 / 60** | **0** | **46 ms** |
+| `qwen2.5vl` | 37 / 60 | - | 711 ms |
+| tesseract `--psm 7` | 38 / 60 | 3 | 73 ms |
+| tesseract `--psm 8` | 38 / 60 | 3 | 73 ms |
 
 
-In the cascade, tesseract settled 6 words and the model 10. The sample is small — the
-`/feedback` log will show what it looks like over time.
+`-` is not zero, it is not recorded in that run. All 59 of glm-ocr's exact readings also
+passed the pattern filter, so it offered 59 answers and not one of them was wrong. The two
+tesseract modes produced the identical output on every word of this sample — see the note
+above.
+
+The single miss reads `dnsSpoof` as `dn`. The length check rejects that, so the word
+escalates to asking you instead of burning an attempt: the failure mode the whole cascade is
+built around.
+
+While loaded, glm-ocr holds **2.0 GB** of VRAM against 5.5 GB for `qwen2.5vl`. Both ran
+entirely on the GPU (RTX 4090 Laptop, 16 GB).
+
+> **How this was measured.** The 60 word images were rebuilt from the author's real glyph
+> dictionary, each letter placed at its recorded row, then validated by re-segmenting the
+> composed images with an independent implementation and checking that the recovered glyph
+> keys matched the source exactly. Two things make the sample easier than reality: one
+> canonical glyph variant per letter, so a single baseline, and one blank column between
+> letters, so no touching letters. One machine, one run — and the `/feedback` log is still
+> the only thing that measures what happens on yours.
+
+### The generation cap
+
+The request carries `num_predict: 24` and `stop: ["\n"]`. Uncapped, glm-ocr takes **15 s**
+per word: it produces the answer almost immediately and then keeps going, restating it in
+markdown. Capped, the same word comes back in **46 ms**. `cleanReading` recovered the correct
+reading in both cases, so nothing was bought with those 15 s — the cost was pure latency, and
+24 tokens is already far more than one word needs.
 
 
-When the model is wrong, it **truncates**: `communityService` becomes `ce`, `ram` becomes
-`I`, `crimePrevention` becomes `Prevention`. The length constraint rejects those readings,
-which is why no wrong reading got through.
+### Latency: measured with `qwen2.5vl`
 
-A second draw of images for the same words gave a cascade at 70 % accepted, 92.9 % correct
-and 1 false accept: over 20 words, the gap between the two draws is sampling noise.
-
-
-### Latency: measured
+Everything in this section was measured with `qwen2.5vl`, the **previous** default. It is
+kept because what it establishes is the gap between running Ollama on the GPU and on the CPU,
+which is a property of the backend rather than of the model. On the same GPU, the current
+default `glm-ocr` has a median of **46 ms**.
 
 On images **never sent before** — the real case, since every word in the game arrives as a
 previously unseen image:
@@ -109,7 +146,8 @@ measures that cache and not the model — which is what first produced a mislead
 median through `/ocr`. Only the first send of a given image counts.
 
 The userscript's deadline stays at 40 s: it is a ceiling, it costs nothing when the answer
-arrives in 0.7 s, and it leaves the model room to answer when Ollama is running on CPU.
+arrives in a fraction of a second, and it leaves the model room to answer when Ollama is
+running on CPU.
 
 ## Running it
 
@@ -139,7 +177,7 @@ sudo pacman -S tesseract tesseract-data-eng
 # vision model
 sudo pacman -S ollama
 sudo systemctl enable --now ollama
-ollama pull qwen2.5vl
+ollama pull glm-ocr
 ```
 
 Debian / Ubuntu:
@@ -149,7 +187,7 @@ sudo apt install tesseract-ocr tesseract-ocr-eng
 
 curl -fsSL https://ollama.com/install.sh | sh
 sudo systemctl enable --now ollama
-ollama pull qwen2.5vl
+ollama pull glm-ocr
 ```
 
 Fedora:
@@ -159,7 +197,7 @@ sudo dnf install tesseract tesseract-langpack-eng
 
 curl -fsSL https://ollama.com/install.sh | sh
 sudo systemctl enable --now ollama
-ollama pull qwen2.5vl
+ollama pull glm-ocr
 ```
 
 macOS (Homebrew):
@@ -169,7 +207,7 @@ brew install tesseract
 
 brew install ollama
 brew services start ollama
-ollama pull qwen2.5vl
+ollama pull glm-ocr
 ```
 
 On Debian, Ubuntu and Fedora the distribution packages for Ollama are often absent or stale,
@@ -192,14 +230,14 @@ the loaded module does not match the installed driver, Ollama will not see the G
 
 To check: the service log (`journalctl -u ollama`) must show `library=CUDA`, and once the
 model is loaded, `curl -s 127.0.0.1:11434/api/ps` must show a non-zero `size_vram` — around
-5 GB for `qwen2.5vl`.
+2 GB for `glm-ocr`.
 
 A model loaded once with `num_gpu: 0` **stays on CPU** until it is unloaded: an ordinary
 request reuses the instance already in memory instead of reloading it onto the GPU. To force
 it back:
 
 ```sh
-curl -s 127.0.0.1:11434/api/generate -d '{"model":"qwen2.5vl","keep_alive":0}'
+curl -s 127.0.0.1:11434/api/generate -d '{"model":"glm-ocr","keep_alive":0}'
 ```
 
 ## Settings (environment variables)
@@ -209,7 +247,7 @@ curl -s 127.0.0.1:11434/api/generate -d '{"model":"qwen2.5vl","keep_alive":0}'
 | `OCR_PORT` | `8787` | listening port (on `127.0.0.1` only) |
 | `OCR_ORIGIN` | `https://s0urce.io` | the only origin allowed; `*` or empty refuses to start |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama instance |
-| `OLLAMA_MODEL` | `qwen2.5vl` | vision model |
+| `OLLAMA_MODEL` | `glm-ocr` | vision model |
 | `OLLAMA_TIMEOUT` | `45000` | model deadline, **independent** of the browser's |
 | `OCR_CHARSET` | letters + digits | whitelist passed to tesseract |
 | `OCR_LOG` | `ocr-server/feedback.jsonl` | accuracy log |
@@ -262,7 +300,7 @@ included:
 
 ```
 23:33:32  OPTIONS /ocr  204  1 ms  origin=https://s0urce.io
-23:33:32  POST /ocr  200  818 ms  word=victimSupport (qwen2.5vl)
+23:33:32  POST /ocr  200  818 ms  word=victimSupport (glm-ocr)
 ```
 
 **If the userscript reports `oracle timed out` and no line appears**, the request never

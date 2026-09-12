@@ -117,7 +117,7 @@ raises the abstention rate — that is, more prompts for no accuracy gain.
 
 ```
 glyph dictionary  ->  lexicon  ->  tesseract  ->  vision model  ->  you
-  (instant)          (instant)     (~50 ms)       (~0.7 s on GPU)  (dialog)
+  (instant)          (instant)     (~50 ms)       (~46 ms on GPU)  (dialog)
 ```
 
 The last two run in a small local server (`ocr-server/`, no dependencies) so the
@@ -145,13 +145,15 @@ The image is upscaled x4 and flattened onto white **in the browser** before bein
 sent — the words are only ~12px tall, well under what OCR engines read
 comfortably, and doing it here keeps the server free of any image library.
 
-Measured on words with one unknown letter, the full cascade — tesseract only
-when its two reading modes agree, the vision model otherwise — resolved 80% of
-them with no wrong reading accepted (20-word sample). The vision model answers in
-~650 ms per word on an RTX 4090 Laptop (`ollama-cuda`) and ~27 s on CPU — same
-readings, 42-45x slower. The oracle timeout defaults to 40 s so a CPU setup still
-gets its answer; on a GPU that ceiling costs nothing. Each engine's accuracy is logged so
-it keeps being measured rather than assumed; see `ocr-server/README.md`.
+Measured on 60 words with one unknown letter each, the default vision model —
+`glm-ocr`, a small model built for text recognition rather than a general-purpose
+one — read 59 exactly, and the pattern filter let through **no wrong reading at
+all**, at a median of 46 ms per word on an RTX 4090 Laptop (`ollama-cuda`). That
+is one run on one machine, on images rebuilt from a real dictionary with no
+touching letters, so treat it as the order of magnitude rather than a promise.
+The oracle timeout defaults to 40 s so a CPU setup still gets its answer; on a GPU
+that ceiling costs nothing. Each engine's accuracy is logged so it keeps being
+measured rather than assumed; see `ocr-server/README.md`.
 
 ### When a letter is missing
 
@@ -328,7 +330,7 @@ Keep WPM plausible — the server records it and shows it to your victims.
 
     ./test/run.sh
 
-**216 assertions over nine suites** on a fresh clone, **224** when the optional
+**219 assertions over nine suites** on a fresh clone, **227** when the optional
 `bck` dictionary fixture is present — the eight extra ones live in
 `ocr_perf_test.js` and are skipped without it. Exit code 0 either way, with no
 browser, no tesseract, no ollama and no network:
