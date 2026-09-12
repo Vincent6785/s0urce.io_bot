@@ -6,6 +6,11 @@
 // userscript breaks four suites at once. They fail loudly rather than quietly
 // — each lookup throws 'extract: markers moved' — so when that happens the fix
 // is to update the marker here, not to reformat the userscript around it.
+//
+// The stubs below must also cover every global the extracted object closes
+// over. Adding one to the userscript without adding it here throws a
+// ReferenceError the moment the extracted code reaches it -- which is how
+// K_PRINTS announced itself.
 const fs = require('fs'), path = require('path');
 const SRC = fs.readFileSync(path.join(__dirname, '..', 's0urce-autohack.user.js'), 'utf8');
 
@@ -31,7 +36,7 @@ function sharedHelpers() {
 exports.ocr = function () {
   const store = {};
   const LS = { get: (k, f) => (k in store ? store[k] : f), set: (k, v) => { store[k] = v; } };
-  const K_GLYPHS = 'g', K_WORDS = 'w';
+  const K_GLYPHS = 'g', K_WORDS = 'w', K_PRINTS = 'p';
   const ui = { status() {}, log() {} };
   const bot = { knownPrints: [] };
   const body = between('    const ocr = {',

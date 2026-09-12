@@ -1,9 +1,19 @@
 # s0urce.io — Auto Hack userscript
 
+[![tests](https://github.com/Vincent6785/s0urce.io_bot/actions/workflows/ci.yml/badge.svg)](https://github.com/Vincent6785/s0urce.io_bot/actions/workflows/ci.yml)
+[![licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+
 Automates the full s0urce.io gameplay loop: picking a target, opening a port,
 reading and typing every word, collecting loot — plus everything a player does
 between hacks: mail, season pass, idle agents, gear, the upgrader and the
 printer.
+
+[Disclaimer](#disclaimer) · [Install](#install) ·
+[Teaching the OCR](#the-one-manual-step-teaching-the-ocr) ·
+[The console](#the-console) · [Housekeeping](#housekeeping) ·
+[Settings](#settings) · [Blending in](#blending-in) · [Notes](#notes) ·
+[Tests](#tests) · [Known limitations](#known-limitations) ·
+[Licence](#licence) · [OCR server](ocr-server/README.md)
 
 ## Disclaimer
 
@@ -18,8 +28,10 @@ printer.
 ## Install
 
 1. Install Tampermonkey.
-2. Open `s0urce-autohack.user.js` → Tampermonkey dashboard → *Utilities* →
-   *Import from file*, or just drag the file onto the browser.
+2. **[Install the script](https://raw.githubusercontent.com/Vincent6785/s0urce.io_bot/main/s0urce-autohack.user.js)**
+   — Tampermonkey intercepts a raw `.user.js` link and offers to install it.
+   Failing that, open `s0urce-autohack.user.js` → Tampermonkey dashboard →
+   *Utilities* → *Import from file*, or drag the file onto the browser.
 3. Load https://s0urce.io/ and log in. **Nothing is drawn on the page** — the
    interface lives in its own window.
 4. Press **`F9`** (or `Ctrl+Alt+A`) to open the console, then **START** (or
@@ -120,7 +132,8 @@ glyph dictionary  ->  lexicon  ->  tesseract  ->  vision model  ->  you
   (instant)          (instant)     (~50 ms)       (~46 ms on GPU)  (dialog)
 ```
 
-The last two run in a small local server (`ocr-server/`, no dependencies) so the
+The last two run in a small local server ([`ocr-server/`](ocr-server/README.md),
+no dependencies) so the
 bot does not stop and wait for a human. Start it with
 `node ocr-server/server.js`; the endpoint is configurable under *OCR oracle* in
 the Config tab.
@@ -153,7 +166,7 @@ is one run on one machine, on images rebuilt from a real dictionary with no
 touching letters, so treat it as the order of magnitude rather than a promise.
 The oracle timeout defaults to 40 s so a CPU setup still gets its answer; on a GPU
 that ceiling costs nothing. Each engine's accuracy is logged so it keeps being
-measured rather than assumed; see `ocr-server/README.md`.
+measured rather than assumed; see [`ocr-server/README.md`](ocr-server/README.md).
 
 ### When a letter is missing
 
@@ -325,6 +338,14 @@ Keep WPM plausible — the server records it and shows it to your victims.
   needs a word while the console is shut — better than stalling the run.
 * Closing the game tab or reloading closes the console with it, since it would
   otherwise be left holding references into a dead javascript context.
+* **`main` is the release channel, and `@version` is its only gate.**
+  Tampermonkey fetches `@updateURL`, reads nothing but the metadata block, and
+  installs only when the version is strictly greater. So a change to the script
+  body without a bump reaches **nobody**, permanently — while a bump reaches
+  **everybody** on the next check, with whatever else is in that push. There is
+  no staging branch between a commit and every installed copy. Bump `@version`
+  and `package.json` together in the same commit (CI checks that they match),
+  and tag it: the tag is the only durable record of what a given version was.
 
 ## Tests
 
@@ -380,9 +401,15 @@ The suites read the userscript directly through `test/extract.js`, so they can
 never run against a stale copy — an earlier generated-module step did exactly
 that once, and passed while testing old code.
 
-A suite that hangs is killed by a watchdog after 180 s, which names the suite
-instead of holding the runner until some outer timeout. `TEST_WATCHDOG_MS`
-overrides that value (defined in `test/env.js`).
+A suite that hangs is killed after 180 s by `test/run.sh`, which names the one
+that hung instead of holding the runner until some outer timeout.
+`TEST_WATCHDOG_MS` overrides that value. `test/env.js` carries a second,
+in-process watchdog, but only the four suites that load it are covered by that
+one — the timeout in `run.sh` is what covers all nine.
+
+One assertion shells out to `pgrep` to prove that hanging up kills the OCR
+engines. Where `pgrep` is absent — slim containers, most notably — it is
+skipped and announced, not failed, so the total drops by one.
 
 ## Known limitations
 

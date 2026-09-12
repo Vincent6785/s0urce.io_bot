@@ -163,7 +163,14 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
   }, 2);
 
   bot.stats.wins = 0;
-  check('a second loop cannot start while one is unwinding', bot.loopActive === false);
+  // Drive the guard instead of asserting the state it happens to be in. Only
+  // "not running, previous loop still unwinding" reaches the second branch of
+  // start(); the old assertion never called start() twice at all.
+  bot.loopActive = true;
+  bot.start();
+  check('a second loop cannot start while one is unwinding',
+        bot.running === false, `running=${bot.running}`);
+  bot.loopActive = false;
   bot.start();
   const d2 = Date.now() + 4000;
   while (bot.stats.wins === 0 && Date.now() < d2) await sleep(10);

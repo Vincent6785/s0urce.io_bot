@@ -89,7 +89,7 @@ function render(word, noise) {
 
     // timing, informational
     const seg = segFromKey(ocr, sample[0], 3);
-    const t = fn => { const s = process.hrtime.bigint(); for (let i = 0; i < 200; i++) fn(); 
+    const t = fn => { const s = process.hrtime.bigint(); for (let i = 0; i < 200; i++) fn();
                       return Number(process.hrtime.bigint() - s) / 1e6 / 200; };
     const before = t(() => oldLookup(ocr, seg));
     const after = t(() => ocr.lookupGlyph(seg));

@@ -11,13 +11,47 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['18', '20', '22']
+        # 18 is the declared floor (built-in fetch) and is kept honest here.
+        # 22 is maintenance LTS, 24 active LTS, 26 current -- the versions
+        # people actually run. 20 is dropped: it went end-of-life in 2026.
+        node: ['18', '22', '24', '26']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       # Nothing to install: the suites run on plain node, against a fake
       # tesseract and a dead Ollama port, so no engine has to be present.
       # This also proves the "fresh clone" promise on every push.
       - run: ./test/run.sh
+
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      # The suites reach into the userscript through marker-delimited
+      # fragments, so a syntax error outside those regions can reach users
+      # through @downloadURL without any test noticing.
+      - name: Parse every JavaScript file
+        run: |
+          for f in s0urce-autohack.user.js ocr-server/server.js test/*.js; do
+            node --check "$f" || exit 1
+          done
+          echo "all files parse"
+
+      # Tampermonkey compares @version against the installed copy and ignores
+      # the body when it is not greater. A body change without a bump reaches
+      # nobody, silently and permanently.
+      - name: Userscript metadata and version
+        run: |
+          head -30 s0urce-autohack.user.js | grep -q '^// ==UserScript==' \
+            || { echo "missing UserScript metadata block"; exit 1; }
+          us=$(grep -m1 -oP '^// @version\s+\K\S+' s0urce-autohack.user.js)
+          pk=$(node -p "require('./package.json').version")
+          echo "userscript=$us  package.json=$pk"
+          [ -n "$us" ] || { echo "no @version in the metadata block"; exit 1; }
+          [ "$us" = "$pk" ] || { echo "version drift: bump both"; exit 1; }

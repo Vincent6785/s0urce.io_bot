@@ -1,0 +1,8 @@
+# .editorconfig asks editors for LF; git does not read .editorconfig, so a
+# clone with core.autocrlf=true would rewrite every line of the userscript to
+# CRLF and produce a whole-file diff. This is the rule that actually binds.
+* text=auto eol=lf
+
+# Executable fixtures: the mode matters, the suite fails without it.
+test/run.sh            text eol=lf
+test/fakebin/tesseract text eol=lf

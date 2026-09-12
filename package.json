@@ -3,6 +3,15 @@
   "version": "1.0.0",
   "description": "Gameplay automation for s0urce.io: a Tampermonkey userscript with a self-training OCR, plus an optional local OCR oracle server.",
   "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vincent6785/s0urce.io_bot.git"
+  },
+  "homepage": "https://github.com/Vincent6785/s0urce.io_bot#readme",
+  "bugs": {
+    "url": "https://github.com/Vincent6785/s0urce.io_bot/issues"
+  },
   "engines": {
     "node": ">=18"
   },

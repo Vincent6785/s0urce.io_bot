@@ -362,10 +362,18 @@ const realFetch = global.fetch;
   // listener used to sit on the request, which has already emitted 'close' by
   // the time its body is read, so nothing was ever aborted.
   const DUR = '7.77';                 // distinctive: nothing else sleeps this long
+  const cp = require('child_process');
+  // Probed once, and separately from the counting: without this, a machine
+  // with no pgrep took the catch below, counted zero engines in flight, and
+  // failed the assertion with a message that blamed the server instead of the
+  // missing binary. An absent tool is a skip, not a regression.
+  const hasPgrep = (() => {
+    try { cp.execSync('command -v pgrep', { stdio: 'ignore' }); return true; }
+    catch (e) { return false; }
+  })();
   const engines = () => {
     try {
-      return +require('child_process')
-        .execSync("pgrep -fc 'slee[p] " + DUR + "'").toString().trim();
+      return +cp.execSync("pgrep -fc 'slee[p] " + DUR + "'").toString().trim();
     } catch (e) { return 0; }
   };
   process.env.FAKE_TESS_SLEEP = DUR;

@@ -3,7 +3,7 @@
 // @namespace    https://github.com/Vincent6785
 // @version      1.0.0
 // @description  Full gameplay automation for s0urce.io: target selection, port attack, word OCR + typing, loot handling, idle-agent claiming. Self-training image OCR (the game sends every word as a PNG).
-// @author       Anatacker
+// @author       Vincent Calmes-Portier
 // @license      MIT
 // @match        https://s0urce.io/*
 // @match        https://www.s0urce.io/*
@@ -113,6 +113,7 @@
     const K_CFG = 's0urce_bot_cfg';
     const K_GLYPHS = 's0urce_bot_glyphs';
     const K_WORDS = 's0urce_bot_words';
+    const K_PRINTS = 's0urce_bot_prints';
 
     /* ======================================================================
      * 1. Configuration
@@ -346,9 +347,7 @@
     function noteImage(res) {
         if (res && typeof res.image === 'string' && res.image.length > 16) {
             bus.lastImage = 'data:image/png;base64,' + res.image;
-            return bus.lastImage;
         }
-        return null;
     }
 
     // Registers an outgoing playerInput so we can pair the eventual ack with it.
@@ -459,7 +458,7 @@
                         if (p.event === 'printItem' && p.id &&
                             bot.knownPrints.indexOf(p.id) === -1) {
                             bot.knownPrints.push(p.id);
-                            LS.set('s0urce_bot_prints', bot.knownPrints);
+                            LS.set(K_PRINTS, bot.knownPrints);
                             ui.log(`learned printable item "${p.id}"`);
                         }
                         traceAdd({
@@ -509,9 +508,9 @@
 
     // The server answers in milliseconds, and during housekeeping a missing
     // answer means it ignored the request (nothing to claim, nothing to sell).
-    // Waiting 20 s for that on every pass stalled the whole loop.
+    // Waiting 20 s for that on every pass would stall the whole loop.
     function defaultTimeout() {
-        return (typeof bot !== 'undefined' && bot.chore) ? 8000 : 20000;
+        return bot.chore ? 8000 : 20000;
     }
 
     // Requests are spaced out. Four different events have timed out across
@@ -665,8 +664,8 @@
             else if (bucket.indexOf(word) === -1) bucket.push(word);
         },
 
-        // `save` used to re-serialise ~144 KB on every learned word. It now
-        // marks the store dirty and coalesces the writes.
+        // Serialising the store costs ~144 KB, so `save` only marks it dirty
+        // and the writes are coalesced rather than paid per learned word.
         dirty: false,
         flushTimer: null,
 
@@ -944,6 +943,12 @@
             let data;
             try { data = JSON.parse(text); } catch (e) { throw new Error('not valid JSON'); }
             if (!data || typeof data !== 'object') throw new Error('not a backup');
+            // `v` was written on export and never read back, which made it a
+            // decoration rather than a format guard. A newer format would
+            // otherwise be half-imported by the shape sniffing below.
+            if (typeof data.v === 'number' && data.v > 1) {
+                throw new Error('backup from a newer version (v' + data.v + ')');
+            }
 
             const parse = v => {
                 if (typeof v === 'string') { try { v = JSON.parse(v); } catch (e) { return null; } }
@@ -979,7 +984,7 @@
                         bot.knownPrints.push(id); out.prints++;
                     }
                 });
-                if (out.prints) LS.set('s0urce_bot_prints', bot.knownPrints);
+                if (out.prints) LS.set(K_PRINTS, bot.knownPrints);
             }
             this.index = null;
             this.save(); this.flush();
@@ -1245,9 +1250,15 @@
             const best = this.pick(res && res.readings, hint);
             if (!best) {
                 this.stats.rejected++;
-                if (res && res.readings && res.readings.length) {
+                // `discarded` carries the readings the server refused to offer
+                // -- the two tesseract modes when they disagree. They are the
+                // most informative thing in a failed resolution, and until now
+                // nothing ever looked at them.
+                const seen = [].concat((res && res.readings) || [],
+                                       (res && res.discarded) || []);
+                if (seen.length) {
                     ui.log('oracle read something that did not fit: ' +
-                           res.readings.map(r => `${r.engine}="${r.text}"`).join(', '));
+                           seen.map(r => `${r.engine}="${r.text}"`).join(', '));
                 }
                 return null;
             }
@@ -1256,16 +1267,19 @@
             return best;
         },
 
-        // Tell the server whether the game accepted the word, so each engine's
-        // real accuracy can be measured rather than assumed.
-        report(reading, accepted) {
+        // Tell the server whether the game accepted the word, and what the word
+        // turned out to be. `confirmed` is deliberately not the reading: after a
+        // rejection it is the word you typed instead, and that difference is the
+        // entire value of the log. Sending the reading in both fields made every
+        // line -- including the rejected ones -- claim the engine had been right.
+        report(reading, accepted, confirmed) {
             if (!cfg.oracleEnabled || this.offline || !reading) return;
             fetch(this.endpoint('feedback'), {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({
                     engine: reading.engine, reading: reading.text,
-                    word: reading.text, accepted: !!accepted
+                    word: confirmed || reading.text, accepted: !!accepted
                 })
             }).catch(() => { });
         }
@@ -1373,10 +1387,6 @@
         },
         canAfford(price) {
             return typeof price === 'number' && (!this.known || this.now() >= price);
-        },
-        spent(price) {          // optimistic, corrected by the next btcUpdate
-            if (this.known && typeof price === 'number') this.btc = Math.max(0, this.now() - price);
-            this.at = now();
         }
     };
 
@@ -1390,13 +1400,14 @@
         counterHacked: false,
         current: null,        // live hack, for the Dashboard tab
         lastOracle: null,     // oracle reading awaiting the server's verdict
+        pendingReport: null,  // rejected reading, waiting to learn the real word
         chore: null,          // housekeeping step in progress
         choreBackoff: {},     // step -> {until, ms} after an unanswered request
         history: [],          // per-word and per-hack samples, for the charts
         premium: false,       // from the loginProfile push
         lootShred: null,      // real auto-shred state, from the initPlayer push
         shredAsked: {},       // what we have asked for but cannot yet confirm
-        knownPrints: LS.get('s0urce_bot_prints', []),   // learned from your own prints
+        knownPrints: LS.get(K_PRINTS, []),   // learned from your own prints
         blacklist: new Map(),          // target id -> retry-after timestamp
         stats: { hacks: 0, wins: 0, losses: 0, words: 0, misses: 0, btc: 0, started: 0 },
 
@@ -1571,6 +1582,14 @@
                 const word = await this.resolveWord(image, forceAsk);
                 if (!word || !this.running) return 'abort';
 
+                // The real word for a rejected reading only exists here, one
+                // iteration after the rejection. Grading it any earlier is what
+                // made the log record the engine's own guess as confirmed.
+                if (this.pendingReport) {
+                    oracle.report(this.pendingReport, false, word);
+                    this.pendingReport = null;
+                }
+
                 const typo = this.maybeTypo(word, tries);
                 const sent = typo || word;
                 this.current.word = sent;
@@ -1588,7 +1607,11 @@
                               ok: out.effect !== 'failed' });
 
                 if (this.lastOracle && this.lastOracle.text === sent) {
-                    oracle.report(this.lastOracle, out.effect !== 'failed');
+                    // On success the word the server took is the confirmation.
+                    // On failure nobody knows the real word yet, so the verdict
+                    // waits for the retry rather than inventing one.
+                    if (out.effect === 'failed') this.pendingReport = this.lastOracle;
+                    else oracle.report(this.lastOracle, true, sent);
                     this.lastOracle = null;
                 }
                 if (typeof out.tries_left === 'number') tries = out.tries_left;
@@ -1741,8 +1764,8 @@
                 if (claims[id]) continue;
                 const reward = rewards[id];
                 // The client only offers tiers that carry a reward and are open
-                // to this account. The server silently ignores the rest, which
-                // used to time out on the same empty tier every single pass.
+                // to this account. The server silently ignores the rest, so
+                // claiming one buys nothing but a timeout, every single pass.
                 if (!reward || (!reward.freePlayer && !this.premium)) continue;
                 const got = await game.claimSeason(id);
                 if (got && got.status === 'success') ui.log(`season pass level ${id} claimed`);
@@ -1780,8 +1803,9 @@
         },
 
         // There is no server offer: the AI market sells whatever item sits in
-        // the `ai_sell` slot. The client only asks when that slot is filled and
-        // the server does not answer otherwise — so every pass used to time out.
+        // the `ai_sell` slot. The client only asks when that slot is filled,
+        // and the server does not answer otherwise — asking with an empty slot
+        // buys nothing but a timeout.
         async doAiMarket() {
             const snap = await this.snapshot();
             if (!snap.data.ai_sell) return;
@@ -1965,8 +1989,19 @@
             const id = (cfg.printItemId || '').trim() || this.knownPrints[0];
             if (!id) return;                  // nothing learned and nothing configured
             const res = await game.printItem(id);
-            if (res && res.notification_success) ui.log(`printed ${id}`);
-            else if (res && res.notification_error) ui.log(`printer: ${res.notification_error}`);
+            if (res && res.notification_success) {
+                ui.log(`printed ${id}`);
+                // Printer ids are learned by watching the page client's own
+                // sends, and the bot's frames go out through rawSend, which
+                // bypasses that hook -- so it never learned from its own
+                // prints. A configured id now teaches itself.
+                if (this.knownPrints.indexOf(id) === -1) {
+                    this.knownPrints.push(id);
+                    LS.set(K_PRINTS, this.knownPrints);
+                }
+            } else if (res && res.notification_error) {
+                ui.log(`printer: ${res.notification_error}`);
+            }
         },
 
         async loop() {
@@ -2100,8 +2135,9 @@
             wallet.absorb(a.btcUpdate);
         }
         if (name === 'loginProfile') bot.premium = !!a.premium;
-        // The server reports refusals through these pushes rather than acks;
-        // the game shows them as a transient hover, the bot used to drop them.
+        // The server reports refusals through these pushes rather than acks,
+        // and the game only shows them as a transient hover — so nothing else
+        // would surface them here.
         if (name === 'newHoverNotification' && a.message) {
             ui.log(`server ${a.status || 'notice'}: ${a.message}`);
         }
@@ -2440,7 +2476,12 @@ polyline{fill:none;stroke:var(--fg);stroke-width:1.5;vector-effect:non-scaling-s
             setText(n.stGlyphs, String(Object.keys(ocr.glyphs).length));
             setText(n.stMisses, String(s.misses));
             const o = oracle.stats;
-            setText(n.stOracle, o.asked ? `${o.accepted}/${o.asked}` : '—');
+            // The per-engine counts were accumulated and never shown. With more
+            // than one engine behind the oracle, which one earned the answer is
+            // the part of this number actually worth reading.
+            const per = Object.keys(o.engines).map(k => `${k} ${o.engines[k]}`).join(', ');
+            setText(n.stOracle,
+                    o.asked ? `${o.accepted}/${o.asked}${per ? ` (${per})` : ''}` : '—');
         },
 
         /* -------------------------------------------------------- charts -- */

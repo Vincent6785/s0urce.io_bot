@@ -43,7 +43,10 @@ const OLLAMA = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 // generalist here because the task is narrow: one word, one line.
 const MODEL = process.env.OLLAMA_MODEL || 'glm-ocr';
 const LOGFILE = process.env.OCR_LOG || path.join(__dirname, 'feedback.jsonl');
-const CHARSET = process.env.OCR_CHARSET ||
+// Sanitised here rather than per request: the whitelist ends up in a tesseract
+// -c argument, and an env var carrying '=' or a newline confuses it exactly the
+// way a request field would. sanitizeCharset is a hoisted function declaration.
+const CHARSET = sanitizeCharset(process.env.OCR_CHARSET) ||
   'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 // The client's patience and the model's warm-up are different things: a vision
 // model loading for the first time outlasts any sensible browser deadline.
@@ -61,8 +64,8 @@ const MAX_CONCURRENT = 4;            // each /ocr spawns two processes
 const HEALTH_CACHE_MS = 10000;
 
 // `ollama` only says the API answers; `model` says the configured model is
-// actually pulled. Without the second, /health reported "present" while every
-// vision request came back 404.
+// actually pulled. Both are needed: without the second, /health reports
+// "present" while every vision request comes back 404.
 const engines = { tesseract: false, ollama: false, model: false };
 
 // "glm-ocr" is listed by Ollama as "glm-ocr:latest"; an explicit tag must
@@ -328,7 +331,9 @@ async function handleOcr(body, signal) {
   // psm 8 to agree accepts 35% but 95% are right, and false accepts drop from
   // 5 to 2. Behind a vision model that trade is the right one — a non-answer
   // just escalates, while a wrong answer burns a try and skips the model.
-  const charset = sanitizeCharset(body.charset) || CHARSET;
+  // No per-request charset. No client ever sent one, and a knob any page can
+  // reach is surface for nothing; OCR_CHARSET still configures it.
+  const charset = CHARSET;
   const [line, word] = await Promise.all([
     runTesseract(img.buf, charset, 7, signal),
     runTesseract(img.buf, charset, 8, signal)

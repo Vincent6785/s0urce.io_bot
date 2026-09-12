@@ -57,16 +57,22 @@ The two disagreeing readings are returned in `discarded`, for diagnosis — neve
 `readings`, or the userscript, which accepts any reading compatible with the pattern, would
 work around the agreement rule.
 
-**On the newer sample the rule filtered nothing.** Over the 60 words measured in the next
-section, psm 7 and psm 8 returned the identical string on 60 out of 60 — including the 23
-words where both were wrong together, which agreement cannot catch. That sits awkwardly
-next to the 120-word table above, where requiring agreement cut false accepts from 5 and 9
-down to 2, and the two results are not reconciled here. They are not the same sample: the
-60-word images carry one canonical glyph variant per letter and one blank column between
-letters, so a single baseline and no touching letters — and a varying baseline and touching
-letters are exactly where reading a line and reading a single word would most plausibly
-diverge. The rule costs nothing when it is redundant, so it stays; which of the two pictures
-holds on real captures deserves re-measuring on real captures.
+<details>
+<summary><strong>On the newer sample the rule filtered nothing</strong> — two results this
+page does not reconcile</summary>
+
+Over the 60 words measured in the next section, psm 7 and psm 8 returned the identical
+string on 60 out of 60 — including the 23 where both were wrong together, which agreement
+cannot catch. That sits awkwardly next to the 120-word table above, where requiring
+agreement cut false accepts from 5 and 9 down to 2.
+
+They are not the same sample. The 60-word images carry one canonical glyph variant per
+letter and one blank column between them: a single baseline, no touching letters. A varying
+baseline with touching letters is exactly where reading a line and reading a single word
+would most plausibly diverge. The rule costs nothing when it is redundant, so it stays —
+which picture holds deserves re-measuring on real captures.
+
+</details>
 
 ### Vision model: measured
 
@@ -123,9 +129,8 @@ default `glm-ocr` has a median of **46 ms**.
 On images **never sent before** — the real case, since every word in the game arrives as a
 previously unseen image:
 
-> Measured once on an RTX 4090 Laptop under Arch Linux with `ollama-cuda`, same
-> images and same session for both rows. Your hardware will differ; what the
-> comparison establishes is the gap between GPU and CPU, not the absolute numbers.
+> Measured once on an RTX 4090 Laptop under Arch Linux with `ollama-cuda`, same images and
+> same session for both rows. Your hardware will differ.
 
 | backend | median | min - max | model load |
 | --- | --- | --- | --- |
@@ -260,13 +265,17 @@ On the userscript side, the address is set in the **Config** tab, under *OCR ora
   `{word, engine, readings[], discarded[]}`. Each `?` in the pattern stands for one
   unreadable segment, which may hide anywhere from 1 to `holeWidth` touching letters; the
   length is therefore only bounded, not fixed. The older form `{length, pattern}` (one `?` =
-  one letter) is still accepted. `pattern` uses `?` for unknown positions. An optional
-  `charset` overrides `OCR_CHARSET` for that request. Entries in `readings` are
-  `{engine, text, fits}`, entries in `discarded` are `{engine, text}`. The image arrives
+  one letter) is still accepted. `pattern` uses `?` for unknown positions. Entries in
+  `readings` are `{engine, text, fits}`, entries in `discarded` are `{engine, text}` -- the
+  two tesseract modes when they disagree, which the console prints. The image arrives
   **already upscaled x4** by the browser: that is what lets this server do without any image
   library.
-- `POST /feedback` — `{engine, reading, word, accepted}` -> one JSONL line. The image is not
-  kept; the reading and the verdict are enough to measure accuracy.
+- `POST /feedback` — `{engine, reading, word, accepted}` -> one JSONL line, stored as
+  `{t, engine, reading, confirmed, accepted}`. The image is not kept. **`word` is the
+  confirmed word, not the reading**: after a rejection it is what the player typed instead,
+  and that difference is the whole point of the log. A client that sends the reading in both
+  fields produces a file in which every line, rejections included, claims the engine was
+  right -- which is exactly what this client used to do.
 - `GET /health` — `{ok, engines: {tesseract, ollama, model}, model, origin}`. `ollama` only
   says the API answers; `model` says the configured model is **actually pulled**. Without
   that distinction the server declared itself ready while every vision request failed with a

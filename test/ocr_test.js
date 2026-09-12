@@ -30,7 +30,11 @@ function render(word, noise=0) {
 }
 
 let pass = 0, fail = 0;
-const check = (name, cond) => { cond ? pass++ : fail++; console.log((cond?'ok  ':'FAIL') + '  ' + name); };
+const check = (name, cond, extra) => {
+  cond ? pass++ : fail++;
+  console.log((cond ? 'ok  ' : 'FAIL') + '  ' + name +
+              (cond || extra === undefined ? '' : `\n      ${extra}`));
+};
 
 // 1. segmentation splits on empty columns
 let seg = ocr.segment(render('abc'));
