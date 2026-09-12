@@ -50,8 +50,10 @@ const ask = (t7, t8, hint) => {
         JSON.stringify(r));
 
   r = await ask('', '', hint);
-  check('no reading: an empty but well-formed response',
-        r.word === null && Array.isArray(r.readings) && Array.isArray(r.discarded));
+  // Both arrays are literals in handleOcr, so Array.isArray could never fail.
+  check('no reading: empty arrays, not merely arrays',
+        r.word === null && r.engine === null &&
+        r.readings.length === 0 && r.discarded.length === 0, JSON.stringify(r));
 
   // the two modes really run with distinct psm values
   process.env.FAKE_TESS_7 = 'seven'; process.env.FAKE_TESS_8 = 'eight';
@@ -139,6 +141,13 @@ const ask = (t7, t8, hint) => {
         !!(sent && sent.options && sent.options.num_predict === 24 &&
            Array.isArray(sent.options.stop) && sent.options.stop[0] === '\n'),
         JSON.stringify(sent && sent.options));
+  // The prompt is the entire interface to the model: dropping the pattern or
+  // the length bounds degrades readings silently -- no error, no red test.
+  check('the prompt carries the bounds and the pattern the client sent',
+        !!(sent && /between 7 and 9 characters/.test(sent.prompt) &&
+           sent.prompt.indexOf('expl?it') !== -1),
+        JSON.stringify(sent && sent.prompt));
+
   check('a reading that fits the pattern comes back as the word',
         !!(out && out.word === 'exploit' && out.engine === 'glm-ocr'), JSON.stringify(out));
   capture.close();

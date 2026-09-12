@@ -234,6 +234,44 @@ const gear = (id, type, rarity, extra) =>
         bot.knownPrints.join());
   s.stop();
 
+  // --- 9a. and the bot learns from the prints IT makes ---------------------
+  // knownPrints is fed by watching the real client's frames; the bot's own
+  // frames leave through rawSend and bypass that hook entirely, so this is a
+  // separate path. Teaching a REFUSED id would be the worse regression: it
+  // persists to localStorage and becomes the default for every later pass.
+  const { store } = require('./env.js');
+  s = server();
+  bot.knownPrints.length = 0;
+  Object.assign(cfg, { printItemId: 'cable_x', printerUpgrade: false });
+  s.routes.printItem = () => ({ status: 'success', notification_success: true });
+  await bot.doPrint();
+  check('a print the bot made teaches its id too',
+        bot.knownPrints.join() === 'cable_x', bot.knownPrints.join());
+  check('and it is persisted, not merely held in memory',
+        JSON.parse(store.get('s0urce_bot_prints') || '[]').join() === 'cable_x',
+        String(store.get('s0urce_bot_prints')));
+  await bot.doPrint();
+  check('printing it again does not duplicate it', bot.knownPrints.length === 1,
+        bot.knownPrints.join());
+  s.stop();
+
+  s = server();
+  bot.knownPrints.length = 0;
+  cfg.printItemId = 'bad_id';
+  s.routes.printItem = () => ({ status: 'success', notification_error: 'no filament' });
+  await bot.doPrint();
+  check('a refused print teaches nothing', bot.knownPrints.length === 0,
+        bot.knownPrints.join());
+  s.stop();
+
+  s = server();
+  cfg.printItemId = '';
+  bot.knownPrints.length = 0;
+  await bot.doPrint();
+  check('nothing configured and nothing learned: no print is attempted',
+        only(s, 'printItem').length === 0, JSON.stringify(sentEvents(s)));
+  s.stop();
+
   // --- 9b. fixes after a real session: requests the server never answers ---
   // Season pass: a reached tier with no reward entry is never claimed.
   s = server();
@@ -297,17 +335,26 @@ const gear = (id, type, rarity, extra) =>
   bot.doSeasonPass = realSeason;
   Object.assign(cfg, savedCfg);
 
-  // During housekeeping an unanswered request gives up after 8 s, not 20.
+  // The value, asserted directly. Waiting the 8 s out proved only "somewhere
+  // between 7.5 and 12 s", and cost a fifth of the whole suite's runtime.
+  bot.chore = 'probe';
+  const choreTimeout = A.defaultTimeout();
+  bot.chore = null;
+  const idleTimeout = A.defaultTimeout();
+  check('housekeeping gives up at 8 s, an ordinary request at 20 s',
+        choreTimeout === 8000 && idleTimeout === 20000, `${choreTimeout} / ${idleTimeout}`);
+
+  // And the mechanism, on an explicit short deadline so the suite never has
+  // to live through either value.
   s = server();
   s.routes.getInventory = () => undefined;             // never answered
-  bot.chore = 'probe';
   const t0 = Date.now();
   let msg = null;
-  await A.game.inventory().catch(e => { msg = e.message; });
-  bot.chore = null;
+  await A.emit({ event: 'getInventory' }, 300).catch(e => { msg = e.message; });
   const waited = Date.now() - t0;
-  check('during housekeeping the timeout is 8 s', msg === 'timeout on getInventory' &&
-        waited >= 7500 && waited < 12000, `${waited} ms, ${msg}`);
+  check('an unanswered request gives up on its deadline',
+        msg === 'timeout on getInventory' && waited >= 250 && waited < 3000,
+        `${waited} ms, ${msg}`);
   s.stop();
 
   // Server refusals pushed as notifications now reach the log.
@@ -356,6 +403,9 @@ const gear = (id, type, rarity, extra) =>
   bot.start();
   const deadline = Date.now() + 5000;
   while (!won && Date.now() < deadline) await sleep(10);
+  // Without this, a slow runner reports three confusing failures about
+  // truncated event lists instead of the one true cause.
+  check('the hack completed within the deadline', won, `won=${won}`);
   bot.stop();
   while (bot.loopActive) await sleep(10);
   await sleep(30);

@@ -1,6 +1,6 @@
 {
   "name": "s0urce-autohack",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Gameplay automation for s0urce.io: a Tampermonkey userscript with a self-training OCR, plus an optional local OCR oracle server.",
   "license": "MIT",
   "repository": {

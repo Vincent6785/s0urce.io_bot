@@ -80,6 +80,32 @@ const realFetch = global.fetch;
   check('an oracle reading writes nothing to the dictionary',
         Object.keys(ocr.glyphs).length === 0);
 
+  // --- 5b. the "did not fit" line is built from untrusted input -----------
+  // oracleUrl is user-editable, so these shapes are reachable in the real
+  // world: a null entry here would throw inside ask() and end the run.
+  A.ui.lines.length = 0;
+  global.fetch = async () => ({ ok: true, json: async () => ({
+    readings: [null, { engine: 'tesseract-psm7', text: 'zzzzzzz' }],
+    discarded: [{ engine: 'tesseract-psm8', text: 'yyyyyyy' }]
+  }) });
+  got = await oracle.ask('data:,', rec, false);
+  const fitLine = A.ui.lines.join(' | ');
+  check('a null reading does not take the run down',
+        got === null && /did not fit/.test(fitLine), fitLine.slice(0, 80));
+  check('the discarded readings are shown alongside the offered ones',
+        /tesseract-psm7="zzzzzzz"/.test(fitLine) &&
+        /tesseract-psm8="yyyyyyy"/.test(fitLine), fitLine.slice(0, 140));
+
+  A.ui.lines.length = 0;
+  global.fetch = async () => ({ ok: true, json: async () => ({
+    readings: Array.from({ length: 10 }, (_, i) => ({ engine: 'e' + i, text: 'x'.repeat(200) }))
+  }) });
+  await oracle.ask('data:,', rec, false);
+  const bigLine = A.ui.lines.join(' | ');
+  check('at most six readings are listed, each field truncated',
+        (bigLine.match(/=/g) || []).length === 6 && !/x{65}/.test(bigLine),
+        `${(bigLine.match(/=/g) || []).length} entries, ${bigLine.length} chars`);
+
   // --- 6. every failure mode falls back instead of throwing ----------------
   oracle.reset();
   global.fetch = async () => { throw new Error('ECONNREFUSED'); };
@@ -115,6 +141,17 @@ const realFetch = global.fetch;
   const word = await bot.resolveWord('data:,', false);
   check('with no oracle, it falls back to the prompt', asked === 1 && word === 'abc',
         `asked=${asked} word=${word}`);
+
+  // A user-facing safety valve with no coverage at all: those who would rather
+  // the run stop than be asked mid-session.
+  asked = 0;
+  cfg.stopOnUnknown = true;
+  bot.running = true;
+  const stopped = await bot.resolveWord('data:,', false);
+  check('stopOnUnknown stops the run instead of asking',
+        asked === 0 && stopped === null, `asked=${asked} word=${stopped}`);
+  check('and the bot really is stopped, not merely silent', bot.running === false);
+  cfg.stopOnUnknown = false;
   oracle.reset();
 
   // --- 8. the image really is upscaled 4x ---------------------------------
@@ -124,9 +161,9 @@ const realFetch = global.fetch;
   document.createElement = tag => {
     const el = {
       tag, style: {}, width: 0, height: 0,
-      getContext: () => ({
-        imageSmoothingEnabled: true, fillStyle: '', fillRect() {}, drawImage() {}
-      }),
+      ctx: { imageSmoothingEnabled: true, fillStyle: '', rect: null,
+             fillRect(...a) { this.rect = a; }, drawImage() {} },
+      getContext() { return this.ctx; },
       toDataURL: () => 'data:image/png;base64,SCALED'
     };
     made.push(el);
@@ -135,13 +172,19 @@ const realFetch = global.fetch;
   delete ocr.upscaledPng;                       // restore the real implementation
   const fresh = require('./extract.js').ocr();
   fresh.loadImage = async () => ({ naturalWidth: 100, naturalHeight: 12 });
-  const outUri = await fresh.upscaledPng.call(
-    Object.assign(fresh, { loadImage: async () => ({ naturalWidth: 100, naturalHeight: 12 }) }),
-    'data:,', 4);
+  const outUri = await fresh.upscaledPng.call(fresh, 'data:,', 4);
   const cv = made[made.length - 1];
   check('the PNG sent is 4x the original size', cv && cv.width === 400 && cv.height === 48,
         cv && `${cv.width}x${cv.height}`);
-  check('and it is genuinely re-encoded', outUri === 'data:image/png;base64,SCALED');
+  // Comparing outUri to the stub's own return value proved nothing. The point
+  // of this function is dark-on-light and UNSMOOTHED: a smoothed upscale is
+  // what the OCR engines choke on.
+  check('smoothing is off and the frame is flattened onto white',
+        !!cv && cv.ctx.imageSmoothingEnabled === false &&
+        cv.ctx.fillStyle === '#ffffff' &&
+        JSON.stringify(cv.ctx.rect) === '[0,0,400,48]' &&
+        outUri === 'data:image/png;base64,SCALED',
+        cv && JSON.stringify({ smooth: cv.ctx.imageSmoothingEnabled, rect: cv.ctx.rect }));
   document.createElement = realCreate;
 
   // --- 9. a timeout is not an unreachable server --------------------------
@@ -210,6 +253,18 @@ const realFetch = global.fetch;
         !!bodies[1] && bodies[1].engine === 'user' &&
         bodies[1].reading === 'exploit' && bodies[1].accepted === true,
         JSON.stringify(bodies[1]));
+
+  // Pins a behaviour change: report() used to bail out while `offline`, which
+  // dropped exactly the `user` line -- the only ground truth in the file --
+  // precisely when the oracle had failed and you had just typed the word.
+  bodies.length = 0;
+  oracle.offline = true;
+  oracle.report({ engine: 'user', text: 'exploit' }, true);
+  await sleep(5);
+  check('a stood-down oracle still records the word you typed',
+        bodies.length === 1 && bodies[0].engine === 'user' &&
+        bodies[0].accepted === true, JSON.stringify(bodies));
+  oracle.offline = false;
 
   cfg.oracleUrl = 'http://127.0.0.1:8787/ocr';
   global.fetch = realFetch;        // the server section needs the real one
@@ -281,7 +336,11 @@ const realFetch = global.fetch;
         pre.headers.get('access-control-allow-private-network') === 'true');
 
   const health = await (await realFetch(base + '/health')).json();
-  check('/health answers', health.ok === true && typeof health.engines === 'object',
+  // `ok:true` is a literal and `engines` always an object; only the echoed
+  // configuration is real data.
+  check('/health echoes the configuration it is actually running with',
+        health.ok === true && health.model === 'glm-ocr' &&
+        health.origin === 'https://s0urce.io' && typeof health.engines === 'object',
         JSON.stringify(health));
 
   // 1x1 png; with no engine installed this must degrade, not crash
@@ -291,8 +350,12 @@ const realFetch = global.fetch;
     body: JSON.stringify({ image: png, hint: { length: 7, pattern: 'expl?it' } })
   });
   const body = await r.json();
-  check('/ocr returns well-formed JSON even with no engine',
-        r.status === 200 && 'word' in body && Array.isArray(body.readings), JSON.stringify(body));
+  // FAKE_TESS_7/8 are unset and Ollama points at a dead port, so the degraded
+  // contract is knowable: a server that invented a reading would pass the old
+  // `'word' in body` form.
+  check('with no engine, /ocr degrades to an empty answer rather than inventing one',
+        r.status === 200 && body.word === null && body.engine === null &&
+        body.readings.length === 0, JSON.stringify(body));
 
   const noImage = await realFetch(base + '/ocr', {
     method: 'POST', headers: { 'content-type': 'application/json' },
@@ -374,9 +437,15 @@ const realFetch = global.fetch;
   const burst = await Promise.all(Array.from({ length: 6 },
     () => post('/ocr', { image: png }).then(r => r.status).catch(() => 'error')));
   delete process.env.FAKE_TESS_SLEEP;
-  check('past 4 requests in flight the rest are turned away with 503',
-        burst.filter(s => s === 503).length === 2 &&
-        burst.filter(s => s === 200).length === 4, JSON.stringify(burst));
+  // On loopback this is 4x200 / 2x503. A runner that smears the six sends
+  // past the 1 s window shifts the split without breaking anything that
+  // matters, so assert the properties instead of the arithmetic: the gate
+  // binds, refusals are a clean 503 rather than a reset, nothing is lost.
+  check('past the concurrency cap the rest are turned away with 503',
+        burst.filter(s => s === 503).length >= 1 &&
+        burst.filter(s => s === 200).length >= 1 &&
+        burst.filter(s => s === 503 || s === 200).length === 6,
+        JSON.stringify(burst));
 
   // A caller that hangs up must not leave engines running. Regression: the
   // listener used to sit on the request, which has already emitted 'close' by
@@ -396,16 +465,25 @@ const realFetch = global.fetch;
       return +cp.execSync("pgrep -fc 'slee[p] " + DUR + "'").toString().trim();
     } catch (e) { return 0; }
   };
+  // Polled rather than slept: a spawn slower than a fixed 700 ms would have
+  // counted zero engines and blamed the server for a scheduling delay -- the
+  // same misattribution the pgrep probe above exists to prevent. Also faster,
+  // since both conditions usually hold within a few hundred ms.
+  const until = async (fn, ms) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { if (fn()) return true; await sleep(100); }
+    return false;
+  };
   process.env.FAKE_TESS_SLEEP = DUR;
   const hangup = new AbortController();
   realFetch(base + '/ocr', {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ image: png }), signal: hangup.signal
   }).catch(() => {});
-  await sleep(700);
+  await until(() => engines() >= 1, 6000);
   const running = engines();          // proves the measurement works at all
   hangup.abort();
-  await sleep(1300);
+  await until(() => engines() === 0, 6000);
   const survivors = engines();
   delete process.env.FAKE_TESS_SLEEP;
   if (hasPgrep) {
@@ -435,9 +513,6 @@ const realFetch = global.fetch;
   // mistake, and used to become the default silently, so the guard never saw it.
   check('an explicitly empty origin refuses to start too', startsWith('') === 1);
 
-  const warm = await srv.warmOllama();
-  check('preloading breaks nothing when ollama is missing', warm === false);
-
   const bad = await realFetch(base + '/ocr', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: '{oops'
   });
@@ -445,12 +520,28 @@ const realFetch = global.fetch;
 
   const fb = await realFetch(base + '/feedback', {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ engine: 'tesseract', reading: 'exploit', word: 'exploit', accepted: true })
+    body: JSON.stringify({ engine: 'tesseract', reading: 'exploit', accepted: true })
   });
   check('/feedback accepts', (await fb.json()).ok === true);
   const logged = fs.readFileSync(logfile, 'utf8').trim().split('\n').map(JSON.parse);
-  check('the log is usable',
-        logged.length === 1 && logged[0].engine === 'tesseract' && logged[0].accepted === true,
+  // The absence matters as much as the presence: this is the only place a
+  // reinstated `confirmed` field would be caught.
+  // Any page on the machine can POST here, and the log is an append-only file
+  // on disk: the cap is what keeps it bounded and parseable.
+  await realFetch(base + '/feedback', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ engine: 'x'.repeat(200), reading: null, accepted: 'yes' })
+  });
+  const lines2 = fs.readFileSync(logfile, 'utf8').trim().split('\n').map(JSON.parse);
+  const dirty = lines2[lines2.length - 1];
+  check('oversized fields are capped, absent ones stay null, accepted is a real boolean',
+        dirty.engine.length === 64 && dirty.reading === null && dirty.accepted === true,
+        JSON.stringify(dirty).slice(0, 120));
+
+  check('the written line is a verdict, with no word field of any kind',
+        logged.length === 1 && logged[0].engine === 'tesseract' &&
+        logged[0].reading === 'exploit' && logged[0].accepted === true &&
+        !('word' in logged[0]) && !('confirmed' in logged[0]),
         JSON.stringify(logged));
   fs.unlinkSync(logfile);
   srv.server.close();

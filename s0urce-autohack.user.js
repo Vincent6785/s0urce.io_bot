@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         s0urce.io — Auto Hack
 // @namespace    https://github.com/Vincent6785
-// @version      1.0.1
+// @version      1.0.2
 // @description  Full gameplay automation for s0urce.io: target selection, port attack, word OCR + typing, loot handling, idle-agent claiming. Self-training image OCR (the game sends every word as a PNG).
 // @author       Vincent Calmes-Portier
 // @license      MIT
@@ -1287,7 +1287,12 @@
         // bugs. A line whose engine is `user` and which was accepted is itself
         // the correct answer, with nothing to reconcile.
         report(source, accepted) {
-            if (!cfg.oracleEnabled || this.offline || !source) return;
+            // Deliberately not gated on `offline`. When the oracle is down,
+            // resolveWord falls through to asking you -- so the line that gets
+            // dropped is exactly the `user` one, the only ground truth in the
+            // file, lost precisely when it is most worth having. The fetch
+            // below already swallows its own failure.
+            if (!cfg.oracleEnabled || !source) return;
             fetch(this.endpoint('feedback'), {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
@@ -2865,7 +2870,8 @@ polyline{fill:none;stroke:var(--fg);stroke-width:1.5;vector-effect:non-scaling-s
     // default so the script leaves nothing at all on the game page.
     if (cfg.debug) {
         window.__autohack = { cfg, saveCfg, bus, ocr, bot, ui, panel, series, game, wallet,
-                              oracle, emit, chatter, decodeFrame, allocAck, hotkeyLetter, SCHEMA };
+                              oracle, emit, chatter, decodeFrame, allocAck, hotkeyLetter,
+                              defaultTimeout, SCHEMA };
     }
 
     function boot() {

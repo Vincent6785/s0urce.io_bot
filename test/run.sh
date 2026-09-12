@@ -40,7 +40,7 @@ if command -v timeout >/dev/null 2>&1; then
   else RUN="timeout ${SECS}s"; fi
 fi
 
-for t in ocr_test.js ocr_perf_test.js frame_test.js integration_test.js loops_test.js oracle_test.js oracle_server_test.js config_migration_test.js debug_gate_test.js; do
+for t in ocr_test.js ocr_perf_test.js frame_test.js integration_test.js loops_test.js oracle_test.js oracle_server_test.js config_migration_test.js debug_gate_test.js runsh_test.js; do
   echo "=== $t ==="
   $RUN node "$t" || {
     status=$?

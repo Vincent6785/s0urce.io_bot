@@ -3,6 +3,32 @@
 The userscript auto-updates from `main`, so an installed copy has no other way
 to learn what changed. That is what this file is for.
 
+## 1.0.2
+
+### Fixed
+
+- **A word you typed yourself was not recorded while the oracle was down.**
+  `report()` bailed out whenever the oracle had stood down — but standing down
+  is exactly what makes the script fall through to asking you, so the line that
+  went missing was the `user` one: the only entry in the log that is certain to
+  be correct, dropped precisely when it was worth the most.
+
+### Tests
+
+- The suite went from 232 assertions in nine suites to 263 in ten, and from
+  41 seconds to 13. Two assertions had been costing 28 of those seconds by
+  waiting out the very timeouts they were measuring; both now prove more than
+  they did before, in under a second between them.
+- Newly covered: printer ids learned from the bot's own prints, the import
+  guard against a newer backup format, the oracle log line built from an
+  untrusted endpoint, the per-engine dashboard counters, `stopOnUnknown`, the
+  `/feedback` field limits, the Ollama prompt contents, and the
+  `TEST_WATCHDOG_MS` handling in `run.sh` — whose failure mode is silent, since
+  a broken watchdog leaves every suite green.
+- Removed or rewritten: assertions that could not fail, one that compared a
+  stub to itself, and fixed sleeps around a spawn race that would have blamed
+  the server for a slow runner.
+
 ## 1.0.1
 
 ### Changed

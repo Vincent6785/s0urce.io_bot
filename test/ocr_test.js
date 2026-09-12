@@ -88,7 +88,13 @@ ocr.toMask = async (tag) => render(tag);
   await ocr.learn('abc', 'abc');
   const dump = JSON.stringify(ocr.exportData());
   const glyphCount = Object.keys(ocr.glyphs).length;
-  check('export carries the dictionary', glyphCount === 3 && dump.includes('"words"'));
+  // `dump.includes('"words"')` was guaranteed by the key name alone, and
+  // glyphCount measures the live object rather than the export.
+  const parsed = JSON.parse(dump);
+  check('the export itself carries the glyphs and the word',
+        glyphCount === 3 && Object.keys(parsed.glyphs).length === 3 &&
+        Object.keys(parsed.words).length === 1,
+        JSON.stringify({ g: Object.keys(parsed.glyphs).length, w: Object.keys(parsed.words).length }));
 
   ocr.reset();
   check('reset really empties it', Object.keys(ocr.glyphs).length === 0);
@@ -122,6 +128,19 @@ ocr.toMask = async (tag) => render(tag);
   err = null;
   try { ocr.importData('{"hello":1}'); } catch (e) { err = e.message; }
   check('a JSON blob with nothing usable is refused', /nothing importable/.test(err || ''), err);
+
+  // 12b. a newer export format is refused instead of being half-eaten by the
+  // shape sniffing below. The string case is the one that matters: it only
+  // works because of the Number() coercion, and "simplifying" to data.v > 1
+  // would silently stop refusing it.
+  err = null;
+  try { ocr.importData('{"v":2,"glyphs":{}}'); } catch (e) { err = e.message; }
+  check('a backup from a newer version is refused', /newer version/.test(err || ''), err);
+  err = null;
+  try { ocr.importData('{"v":"2","glyphs":{}}'); } catch (e) { err = e.message; }
+  check('a version written as a string counts too', /newer version/.test(err || ''), err);
+  const cur = ocr.importData(dump);          // v:1 -- still the current format
+  check('the current format still imports', cur.glyphs === 3, JSON.stringify(cur));
 
   const stale = JSON.stringify({ glyphs: { '5x7+0:abcd': 'a', '1x1:f@0': 'b' } });
   const r12 = ocr.importData(stale);

@@ -50,7 +50,6 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
   const p1 = A.emit({ event: 'getComputerInfo' });
   const botId = rawIdOf(ws, ws.sent.length - 1);
   check('bot ack id follows the client counter', botId === 6, `got ${botId}, wanted 6`);
-  check('bot id is not in a giveaway range', botId < 1000);
   ws.deliver(`43${botId}[{"status":"success"}]`);
   check('request resolves on its ack', (await p1).status === 'success');
 
@@ -128,6 +127,9 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
   bot.start();
   const deadline = Date.now() + 4000;
   while (!victory && Date.now() < deadline) await sleep(10);
+  // A slow runner would otherwise fail the four result assertions below with
+  // a truncated word list, hiding the single real cause.
+  check('the hack completed within the deadline', victory, `victory=${victory}`);
   bot.stop();
   while (bot.loopActive) await sleep(10);
 
@@ -203,6 +205,8 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
         `heldBack=${heldBack} thenStarted=${bot.running}`);
   const d2 = Date.now() + 4000;
   while (bot.stats.wins === 0 && Date.now() < d2) await sleep(10);
+  check('the retried hack completed within the deadline', bot.stats.wins > 0,
+        `wins=${bot.stats.wins}`);
   bot.stop();
   while (bot.loopActive) await sleep(10);
   clearInterval(pump2);
@@ -228,6 +232,72 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
         !!feedback[1] && feedback[1].engine === 'user' &&
         feedback[1].reading === 'correct' && feedback[1].accepted === true,
         JSON.stringify(feedback[1]));
+
+  // --- 6b. two promises the log makes that phase 6 cannot stage ------------
+  // (a) a word the dictionary reads alone consults no engine, so it must log
+  // nothing at all; (b) a fumble of our own must never be blamed on one.
+  const fb2 = [];
+  const savedFetch2 = global.fetch;
+  global.fetch = async (url, init) => {
+    if (String(url).endsWith('/feedback')) fb2.push(JSON.parse(init.body));
+    return { ok: true, json: async () => ({}) };
+  };
+  cfg.oracleEnabled = true;
+  let askedEngine = 0, won3 = false, sentWords = [];
+  A.oracle.ask = async () => { askedEngine++; return null; };
+  A.ocr.recognize = async () => ({ word: 'w1', segments: [], lineHash: 'h' });
+  // `served` is reused deliberately: a fresh set would replay every frame the
+  // earlier phases already sent.
+  const pump3 = setInterval(() => {
+    for (let i = 0; i < ws.sent.length; i++) {
+      if (served.has(i)) continue;
+      served.add(i);
+      const d = A.decodeFrame(ws.sent[i]);
+      if (!d || !Array.isArray(d.payload)) continue;
+      const req = d.payload[1];
+      const reply = r => ws.deliver(`43${d.id}[${JSON.stringify(r)}]`);
+      if (req.event === 'getClosestPlayersAndNPC')
+        reply({ status: 'success', data: [{ id: 'npc1', isNpc: true }], npcList: [] });
+      else if (req.event === 'attackNpcPort')
+        reply({ status: 'success', profile: {}, tries_left: 5, image: 'IMG' });
+      else if (req.event === 'sendWord') {
+        sentWords.push(req.word);
+        if (req.word === 'typ0') reply({ effect: 'failed', tries_left: 4 });
+        else { won3 = true; reply({ status: 'victory', effect: 'success', btcReward: 0, showLoot: false }); }
+      } else reply({ status: 'success' });
+    }
+  }, 2);
+  bot.stats.wins = 0;
+  bot.start();
+  let d3 = Date.now() + 4000;
+  while (!won3 && Date.now() < d3) await sleep(10);
+  bot.stop();
+  while (bot.loopActive) await sleep(10);
+  check('a word the dictionary read alone consults no engine and logs nothing',
+        won3 && askedEngine === 0 && fb2.length === 0,
+        `won=${won3} asked=${askedEngine} lines=${JSON.stringify(fb2)}`);
+
+  // (b) deterministic fumble: a guard test must not itself be probabilistic.
+  fb2.length = 0; sentWords = []; won3 = false;
+  A.ocr.recognize = async () => ({ word: null, partial: '', segments: [], lineHash: 'h' });
+  A.oracle.ask = async () => ({ engine: 'glm-ocr', text: 'correct' });
+  const realTypo = bot.maybeTypo;
+  let fumbles = 0;
+  bot.maybeTypo = () => (++fumbles === 1 ? 'typ0' : null);
+  bot.stats.wins = 0;
+  bot.start();
+  d3 = Date.now() + 4000;
+  while (!won3 && Date.now() < d3) await sleep(10);
+  bot.stop();
+  while (bot.loopActive) await sleep(10);
+  clearInterval(pump3);
+  bot.maybeTypo = realTypo;
+  cfg.oracleEnabled = false;
+  global.fetch = savedFetch2;
+  check('a fumble of our own is never logged against the engine',
+        sentWords.includes('typ0') && won3 &&
+        !fb2.some(f => f.accepted === false),
+        `sent=${JSON.stringify(sentWords)} lines=${JSON.stringify(fb2)}`);
 
   // --- 7. timing model -----------------------------------------------------
   cfg.humanPauses = true; cfg.wpm = 80;
@@ -261,6 +331,24 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
     }
   } catch (e) { threw = e; }
   check('every tab renders without throwing', threw === null, threw && threw.stack);
+
+  // The per-engine counts were accumulated and never displayed for a whole
+  // release: rendering with an empty `engines` map, as every other render
+  // test does, cannot see that.
+  const dash = stats => {
+    A.oracle.stats = stats;
+    A.panel.select('dash'); A.panel.render();
+    return A.panel.n && A.panel.n.stOracle && A.panel.n.stOracle.textContent;
+  };
+  check('the dashboard names which engine earned the answer',
+        dash({ asked: 3, accepted: 2, rejected: 1, engines: { 'glm-ocr': 2 } }) === '2/3 (glm-ocr 2)',
+        String(dash({ asked: 3, accepted: 2, rejected: 1, engines: { 'glm-ocr': 2 } })));
+  check('with no engine recorded it shows the bare ratio, not empty brackets',
+        dash({ asked: 3, accepted: 2, rejected: 1, engines: {} }) === '2/3',
+        String(dash({ asked: 3, accepted: 2, rejected: 1, engines: {} })));
+  check('and a dash before the oracle has ever been asked',
+        dash({ asked: 0, accepted: 0, rejected: 0, engines: {} }) === '\u2014',
+        String(dash({ asked: 0, accepted: 0, rejected: 0, engines: {} })));
 
   // a closed popup must tear the render loop down, not spin on a dead window
   A.panel.win.closed = true;
@@ -355,8 +443,11 @@ const rawIdOf = (ws, i) => A.decodeFrame(ws.sent[i]).id;
   ws = connect();
   cfg.minRequestGap = 0;
   let sentBefore = ws.sent.length;
-  await Promise.all([A.emit({ event: 'a' }), A.emit({ event: 'b' }), A.emit({ event: 'c' })]
-    .map(p => p.catch(() => {})));
+  // Fire and forget, like the paced block below. Nothing acks these, so
+  // awaiting them waits out three 20 s request deadlines -- 20 s of a 21 s
+  // suite. The claim is about frames reaching the wire, observable at once.
+  [A.emit({ event: 'a' }), A.emit({ event: 'b' }), A.emit({ event: 'c' })]
+    .forEach(p => p.catch(() => {}));
   await sleep(30);
   check('with no pacing, requests go out immediately',
         ws.sent.length - sentBefore === 3, String(ws.sent.length - sentBefore));
